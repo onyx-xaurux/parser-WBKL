@@ -1,1 +1,0 @@
-vless://a96f18f0-4a56-4c4f-be6e-434835f5523c@51.250.41.175:443?flow=xtls-rprx-vision&type=tcp&headerType=none&security=reality&fp=random&sni=ozon.ru&pbk=m3SdKrKSpnUhlZnxUAP68IGbsQgfWcKh_Vf22Mfc4nw&sid=80b70e6b77733678&spx=/#%F0%9F%87%A6%F0%9F%87%B1%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%20%D0%B3%D0%BB%D1%83%D1%88%D0%B8%D0%BB%D0%BE%D0%BA%202
