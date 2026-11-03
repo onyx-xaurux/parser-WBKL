@@ -1,2 +1,2 @@
-89.208.230.57:443#ads.x5.ru
-51.250.41.175:443#ozon.ru
+vless://4218c8a0-5746-07d0-ba08-c11e96613f40@89.208.230.57:443?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&fp=qq&sni=ads.x5.ru&pbk=4CH3o5zOMcFNMbnwXnkAg0FFepmsc0QzhahXkUzb1ik&sid=d8c6b58bcbb0c323#%F0%9F%87%B7%F0%9F%87%BA%20VK%20%E2%80%94%20%2312
+vless://a96f18f0-4a56-4c4f-be6e-434835f5523c@51.250.41.175:443?flow=xtls-rprx-vision&type=tcp&headerType=none&security=reality&fp=random&sni=ozon.ru&pbk=m3SdKrKSpnUhlZnxUAP68IGbsQgfWcKh_Vf22Mfc4nw&sid=80b70e6b77733678&spx=/#%F0%9F%87%A6%F0%9F%87%B1%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%20%D0%B3%D0%BB%D1%83%D1%88%D0%B8%D0%BB%D0%BE%D0%BA%202
