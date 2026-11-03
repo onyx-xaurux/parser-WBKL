@@ -8,8 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent
 SOURCES_FILE = BASE_DIR / "sources.txt"
 TG_FILE = BASE_DIR / "tg.txt"
 
-WHITELIST_IPS_FILE = BASE_DIR / "whitelist_ips.txt"
-WHITELIST_SNI_FILE = BASE_DIR / "whitelist_sni.txt"
+WHITELIST_FILE = BASE_DIR / "whitelist.txt"
 
 WORKING_FILE = BASE_DIR / "working_proxies.txt"
 DEAD_CACHE_FILE = BASE_DIR / "dead_cache.json"
