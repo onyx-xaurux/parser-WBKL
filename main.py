@@ -4,11 +4,12 @@ import sys
 import os
 import aiohttp
 import base64
+import re
 from pathlib import Path
 from bs4 import BeautifulSoup
-
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.errors import FloodWaitError
 
 from config import (
     WHITELIST_IPS, WHITELIST_SNI, WORKING_PROXIES,
@@ -50,38 +51,6 @@ async def load_web_sources():
         text = "\n".join(results)
     return text
 
-async def load_sub_sources():
-    # Читаем ссылки на подписки из web_sources.txt, если там есть base64
-    if not WEB_SOURCES.exists():
-        return ""
-    
-    urls = [line.strip() for line in WEB_SOURCES.read_text().splitlines() if line.strip() and not line.startswith('#')]
-    if not urls:
-        return ""
-
-    text = ""
-    async with aiohttp.ClientSession() as session:
-        for url in urls:
-            try:
-                async with session.get(url, timeout=15) as response:
-                    if response.status == 200:
-                        content = await response.text()
-                        content = content.strip()
-                        
-                        if not content.startswith(("vless://", "vmess://", "trojan://", "ss://")):
-                            try:
-                                padded = content + "=" * ((4 - len(content) % 4) % 4)
-                                decoded = base64.b64decode(padded).decode('utf-8')
-                                if "://" in decoded:
-                                    content = decoded
-                            except Exception:
-                                pass
-                        
-                        text += content + "\n"
-            except Exception as e:
-                logger.error(f"Failed to fetch subscription {url}: {e}")
-    return text
-
 async def load_telegram_sources():
     if not TG_SOURCES.exists():
         return ""
@@ -97,25 +66,61 @@ async def load_telegram_sources():
     if not targets:
         return ""
 
-    logger.info(f"Fetching {len(targets)} Telegram sources...")
+    logger.info(f"Fetching Telegram sources (with deep links)...")
     text = ""
+    checked_channels = set()
     
     try:
         client = TelegramClient(StringSession(session_str), int(api_id), api_hash)
         await client.connect()
         
-        if not await client.is_user_authorized():
+        if not client.is_user_authorized():
             logger.error("Telegram session is not authorized.")
             await client.disconnect()
             return ""
 
-        for target in targets:
+        # Очередь каналов для проверки (начинаем с тех, что в файле)
+        queue = list(targets)
+        
+        while queue:
+            target = queue.pop(0)
+            if target in checked_channels:
+                continue
+            checked_channels.add(target)
+            
             try:
                 logger.info(f"Reading TG: {target}")
-                messages = await client.get_messages(target, limit=100)
+                messages = await client.get_messages(target, limit=50)
+                
+                # Флаг, нашли ли мы конфиги в этом канале
+                found_configs = False
+                
                 for msg in messages:
-                    if msg.text:
-                        text += msg.text + "\n"
+                    if not msg.text:
+                        continue
+                        
+                    msg_text = msg.text
+                    text += msg_text + "\n"
+                    
+                    # Если в сообщении есть конфиг — отмечаем
+                    if "vless://" in msg_text or "trojan://" in msg_text or "vmess://" in msg_text:
+                        found_configs = True
+                    
+                    # Ищем ссылки на другие каналы (t.me/...)
+                    links = re.findall(r'https?://t\.me/([a-zA-Z0-9_]+)', msg_text)
+                    for link in links:
+                        channel = f"@{link}"
+                        # Не добавляем ботов и системные ссылки
+                        if channel not in checked_channels and not link.startswith("joinchat") and link != "proxy":
+                            queue.append(channel)
+                            
+                if found_configs:
+                    logger.info(f"  -> Найдены конфиги в канале {target}!")
+                    
+            except FloodWaitError as e:
+                logger.warning(f"FloodWait на {target}. Ждем {e.seconds} секунд...")
+                await asyncio.sleep(e.seconds)
+                queue.append(target) # Возвращаем в очередь, чтобы дочитать
             except Exception as e:
                 logger.error(f"Failed to read {target}: {e}")
                 
@@ -139,9 +144,6 @@ async def main():
     
     logger.info("Loading web sources...")
     all_text.append(await load_web_sources())
-    
-    logger.info("Loading subscription sources...")
-    all_text.append(await load_sub_sources())
     
     logger.info("Loading telegram sources...")
     all_text.append(await load_telegram_sources())
@@ -172,10 +174,10 @@ async def main():
     
     async def check_pair(cfg):
         async with sem:
+            # Если используешь простой чекер (без Xray) — оставляем как было
             is_alive = await checker.check(cfg.ip, cfg.sni)
             if is_alive:
                 logger.info(f"[ALIVE] {cfg.raw}")
-                # ВОЗВРАЩАЕМ ОРИГИНАЛЬНУЮ ССЫЛКУ vless://
                 return cfg.original_link if cfg.original_link else cfg.raw
             return None
 
