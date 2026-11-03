@@ -3,7 +3,7 @@ name: Proxy Scanner
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *' # Каждые 6 часов
+    - cron: '0 */6 * * *'
 
 permissions:
   contents: write
@@ -26,6 +26,10 @@ jobs:
         run: python fetch_whitelist.py
 
       - name: Run Scanner
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION_STRING: ${{ secrets.TG_SESSION_STRING }}
         run: python main.py
 
       - name: Commit results
