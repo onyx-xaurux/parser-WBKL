@@ -13,7 +13,7 @@ class ProxyConfig:
         
         self.sni = str(sni).strip().lower()
         self.raw = f"{self.ip}:{self.port}#{self.sni}"
-        self.original_link = original_link # <--- СОХРАНЯЕМ ССЫЛКУ
+        self.original_link = original_link
 
     def __repr__(self):
         return self.raw
@@ -26,11 +26,9 @@ def _get_param(params, key):
 
 def extract_vless(text):
     configs = []
-    # Ищем ссылки, захватывая их целиком
     for match in re.finditer(r'(vless://[^\s]+)', text):
         full_link = match.group(1)
-        # Разбираем ссылку для проверки
-        parsed = re.match(r'vless://([^@]+)@([^:]+):(\d+)\?([^#]+)(?:#.*)?', full_link)
+        parsed = re.match(r'vless://([^@]+)@([^:]+):(\d+)\?([^#\s]+)(?:#.*)?', full_link)
         if parsed:
             ip = parsed.group(2)
             port = parsed.group(3)
@@ -45,7 +43,7 @@ def extract_trojan(text):
     configs = []
     for match in re.finditer(r'(trojan://[^\s]+)', text):
         full_link = match.group(1)
-        parsed = re.match(r'trojan://([^@]+)@([^:]+):(\d+)\?([^#]+)(?:#.*)?', full_link)
+        parsed = re.match(r'trojan://([^@]+)@([^:]+):(\d+)\?([^#\s]+)(?:#.*)?', full_link)
         if parsed:
             ip = parsed.group(2)
             port = parsed.group(3)
@@ -56,8 +54,6 @@ def extract_trojan(text):
                 configs.append(ProxyConfig(ip, port, sni, full_link))
     return configs
 
-# VMess и JSON оставляем как есть, они проверяются по IP и SNI
-# (Для VMess ссылка тоже сохраняется)
 def extract_vmess(text):
     configs = []
     for match in re.finditer(r'(vmess://[^\s]+)', text):
@@ -78,4 +74,29 @@ def extract_vmess(text):
             pass
     return configs
 
-# ... функции extract_json_configs и parse_text оставляем без изменений ...
+def extract_json_configs(text):
+    configs = []
+    for match in re.finditer(r'\{[^{}]*"server"\s*:\s*"([^"]+)"[^{}]*"server_port"\s*:\s*(\d+)[^{}]*\}', text):
+        ip = match.group(1)
+        port = match.group(2)
+        block = match.group(0)
+        
+        sni_match = re.search(r'"(?:sni|server_name|host)"\s*:\s*"([^"]+)"', block)
+        sni = sni_match.group(1) if sni_match else ""
+        
+        if ip and port and sni:
+            configs.append(ProxyConfig(ip, port, sni))
+    return configs
+
+# ВОТ ТА САМАЯ ФУНКЦИЯ, КОТОРОЙ НЕ ХВАТАЛО
+def parse_text(text):
+    all_configs = []
+    all_configs.extend(extract_vless(text))
+    all_configs.extend(extract_trojan(text))
+    all_configs.extend(extract_vmess(text))
+    all_configs.extend(extract_json_configs(text))
+
+    unique = {}
+    for c in all_configs:
+        unique[c.raw] = c
+    return list(unique.values())
