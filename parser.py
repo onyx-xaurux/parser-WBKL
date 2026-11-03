@@ -20,7 +20,12 @@ from config import (
 )
 
 log = logging.getLogger(__name__)
-URI_RE = re.compile(r'(?:vless|vmess|trojan|ss)://[^\s<>"\\']+', re.I)
+
+URI_RE = re.compile(
+    r"""(?:vless|vmess|trojan|ss)://[^\s<>"']+""",
+    re.I
+)
+
 
 def read_text(path):
     try:
