@@ -1,14 +1,13 @@
-
 name: Proxy Scanner Parser
+
+permissions:
+  contents: write
 
 on:
   schedule:
     - cron: "0 */2 * * *"
 
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 concurrency:
   group: proxy-scanner
@@ -62,13 +61,15 @@ jobs:
         if: success() && github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add parsed_results.json dead_cache.json working_proxies.txt
+          for f in parsed_results.json working_proxies.txt dead_cache.json; do
+            [ -f "$f" ] && git add "$f" || echo "no $f"
+          done
 
-          if ! git diff --cached --quiet; then
-            git commit -m "Update parser results [skip ci]"
-            git push
-          else
+          if git diff --cached --quiet; then
             echo "No changes to commit"
+          else
+            git commit -m "update results [skip ci]"
+            git push
           fi
