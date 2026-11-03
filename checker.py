@@ -2,7 +2,6 @@ import asyncio
 import json
 import ssl
 import time
-from pathlib import Path
 from config import DEAD_CACHE, CHECK_TIMEOUT, CACHE_TTL_HOURS
 
 class Checker:
@@ -35,7 +34,6 @@ class Checker:
         self.cache[f"{ip}#{sni}"] = time.time()
 
     async def check(self, ip, sni):
-        # Если уже знаем, что мертвый — пропускаем
         if self.is_dead(ip, sni):
             return False
 
@@ -44,14 +42,13 @@ class Checker:
         ctx.verify_mode = ssl.CERT_NONE
 
         try:
-            # Пытаемся сделать TLS Handshake с нужным SNI
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(ip, 443, ssl=ctx, server_hostname=sni),
                 timeout=CHECK_TIMEOUT
             )
             writer.close()
             await writer.wait_closed()
-            return True # Живой
+            return True
         except Exception:
             self.mark_dead(ip, sni)
-            return False # Мертвый
+            return False
