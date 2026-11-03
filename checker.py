@@ -1,531 +1,243 @@
-
 import asyncio
-import aiohttp
+import base64
 import json
 import logging
 import os
 import socket
 import tempfile
-
-from datetime import datetime, timezone, timedelta
+import time
 from pathlib import Path
-from urllib.parse import urlsplit, parse_qs
+from urllib.parse import urlsplit, parse_qs, unquote
 
+import aiohttp
 from aiohttp_socks import ProxyConnector
 
 from config import (
-    BASE_PROXY,
-    SING_BOX_PATH,
-    CHECK_URL,
-    CHECK_TIMEOUT,
-    MAX_CONCURRENT_CHECKS,
-    DEAD_CACHE_HOURS,
-    DEAD_CACHE_FILE,
+    SING_BOX_PATH, CHECK_URLS, CHECK_TIMEOUT, MAX_CONCURRENT_CHECKS,
+    DEAD_CACHE_FILE, WORKING_FILE, RECHECK_AFTER_HOURS, BASE_PROXY,
 )
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
-
-def load_cache():
-    if not DEAD_CACHE_FILE.exists():
-        return {}
-
+def load_json(path, default):
     try:
-        data = json.loads(
-            DEAD_CACHE_FILE.read_text(
-                encoding="utf-8"
-            )
-        )
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
 
-        return data if isinstance(data, dict) else {}
+def save_json_atomic(path, data):
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
-    except (OSError, json.JSONDecodeError):
-        logger.exception("Ошибка чтения dead_cache.json")
-        return {}
+def decode_vmess(uri):
+    raw = uri[8:].split("#", 1)[0]
+    return json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
 
-
-def save_cache(cache):
-    DEAD_CACHE_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    fd, temp_path = tempfile.mkstemp(
-        dir=DEAD_CACHE_FILE.parent,
-        suffix=".tmp"
-    )
-
-    try:
-        with os.fdopen(
-            fd,
-            "w",
-            encoding="utf-8"
-        ) as file:
-            json.dump(
-                cache,
-                file,
-                ensure_ascii=False,
-                indent=2
-            )
-
-        os.replace(
-            temp_path,
-            DEAD_CACHE_FILE
-        )
-
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-
-
-def cache_is_fresh(entry):
-    try:
-        timestamp = datetime.fromisoformat(
-            entry["timestamp"]
-        )
-
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(
-                tzinfo=timezone.utc
-            )
-
-        age = (
-            datetime.now(timezone.utc)
-            - timestamp
-        )
-
-        return age < timedelta(
-            hours=DEAD_CACHE_HOURS
-        )
-
-    except (KeyError, ValueError, TypeError):
-        return False
-
-
-def parse_base_proxy():
-    if not BASE_PROXY:
-        return None
-
-    parsed = urlsplit(BASE_PROXY)
-
-    scheme = parsed.scheme.lower()
-
-    if scheme in ("socks5", "socks5h"):
-        proxy_type = "socks"
-        version = "5"
-
-    elif scheme == "socks4":
-        proxy_type = "socks"
-        version = "4"
-
-    elif scheme == "http":
-        proxy_type = "http"
-        version = None
-
-    else:
-        raise ValueError(
-            "BASE_PROXY: поддерживаются socks4, socks5 и http"
-        )
-
-    if not parsed.hostname or not parsed.port:
-        raise ValueError("Некорректный BASE_PROXY")
-
-    outbound = {
-        "type": proxy_type,
-        "tag": "base",
-        "server": parsed.hostname,
-        "server_port": parsed.port,
-    }
-
-    if version:
-        outbound["version"] = version
-
-    if parsed.username:
-        outbound["username"] = parsed.username
-
-    if parsed.password:
-        outbound["password"] = parsed.password
-
-    return outbound
-
-
-def build_node(config):
-    """Создаёт outbound sing-box из URI или JSON."""
-
-    raw = config["raw"]
-    protocol = config["protocol"]
-
-    if raw.lstrip().startswith("{"):
-        outbound = json.loads(raw)
-
-        if not isinstance(outbound, dict):
-            raise ValueError("JSON outbound должен быть объектом")
-
-        if outbound.get("type") not in (
-            "vless", "vmess", "trojan"
-        ):
-            raise ValueError("Неподдерживаемый JSON protocol")
-
-        outbound["tag"] = "node"
-
-        if BASE_PROXY:
-            outbound["detour"] = "base"
-
-        return outbound
-
-    if protocol == "vmess":
-        import base64
-
-        encoded = raw.split("://", 1)[1]
-        encoded += "=" * (-len(encoded) % 4)
-
-        data = json.loads(
-            base64.urlsafe_b64decode(encoded)
-        )
-
-        outbound = {
-            "type": "vmess",
-            "tag": "node",
-            "server": data["add"],
-            "server_port": int(data["port"]),
-            "uuid": data["id"],
-            "security": data.get("scy", "auto"),
-            "alter_id": int(data.get("aid", 0)),
-        }
-
-        network = data.get("net", "")
-        host = data.get("host", "")
-        path = data.get("path", "/")
-
-        security = data.get("tls", "")
-
-    else:
-        parsed = urlsplit(raw)
-        params = parse_qs(parsed.query)
-
-        if not parsed.hostname or not parsed.port:
-            raise ValueError("Некорректный адрес сервера")
-
-        outbound = {
-            "type": protocol,
-            "tag": "node",
-            "server": parsed.hostname,
-            "server_port": parsed.port,
-        }
-
-        if protocol == "vless":
-            if not parsed.username:
-                raise ValueError("Отсутствует UUID VLESS")
-
-            outbound["uuid"] = parsed.username
-
-            flow = params.get("flow", [""])[0]
-
-            if flow:
-                outbound["flow"] = flow
-
-        elif protocol == "trojan":
-            if parsed.password is None:
-                raise ValueError("Отсутствует пароль Trojan")
-
-            outbound["password"] = parsed.password
-
-        network = params.get("type", [""])[0]
-        host = params.get("host", [""])[0]
-        path = params.get("path", ["/"])[0]
-
-        security = params.get(
-            "security",
-            ["tls" if protocol == "trojan" else ""]
-        )[0]
-
-    if BASE_PROXY:
-        outbound["detour"] = "base"
-
-    sni = config["sni"]
-
-    if security in ("tls", "reality", "true"):
-        tls = {
-            "enabled": True,
-            "server_name": sni,
-        }
-
-        fingerprint = (
-            data.get("fp", "")
-            if protocol == "vmess"
-            else params.get("fp", [""])[0]
-        )
-
-        if fingerprint:
-            tls["utls"] = {
-                "enabled": True,
-                "fingerprint": fingerprint,
-            }
-
-        if security == "reality":
-            public_key = params.get("pbk", [""])[0]
-            short_id = params.get("sid", [""])[0]
-
-            if not public_key:
-                raise ValueError("Reality: отсутствует pbk")
-
+def make_outbound(uri):
+    if uri.startswith("vless://"):
+        p = urlsplit(uri)
+        q = parse_qs(p.query)
+        tls_on = q.get("security", [""])[0] in ("tls", "reality")
+        tls = {"enabled": tls_on}
+        sni = q.get("sni", [""])[0]
+        if sni:
+            tls["server_name"] = sni
+        fp = q.get("fp", [""])[0]
+        if fp:
+            tls["utls"] = {"enabled": True, "fingerprint": fp}
+        if q.get("security", [""])[0] == "reality":
             tls["reality"] = {
                 "enabled": True,
-                "public_key": public_key,
-                "short_id": short_id,
+                "public_key": q.get("pbk", [""])[0],
+                "short_id": q.get("sid", [""])[0],
             }
-
-        outbound["tls"] = tls
-
-    if network == "ws":
-        transport = {
-            "type": "ws",
-            "path": path,
+        out = {
+            "type": "vless", "tag": "node", "server": p.hostname,
+            "server_port": p.port, "uuid": unquote(p.username or ""),
+            "tls": tls,
         }
-
-        if host:
-            transport["headers"] = {
-                "Host": host
-            }
-
-        outbound["transport"] = transport
-
-    elif network == "grpc":
-        service_name = (
-            params.get("serviceName", [""])[0]
-            if protocol != "vmess"
-            else path.strip("/")
-        )
-
-        outbound["transport"] = {
-            "type": "grpc",
-            "service_name": service_name,
+        flow = q.get("flow", [""])[0]
+        if flow:
+            out["flow"] = flow
+        return out
+    if uri.startswith("vmess://"):
+        d = decode_vmess(uri)
+        tls_on = str(d.get("tls", "")).lower() in ("tls", "true", "1")
+        out = {
+            "type": "vmess", "tag": "node", "server": d["add"],
+            "server_port": int(d["port"]), "uuid": d["id"],
+            "security": d.get("scy") or "auto",
+            "alter_id": int(d.get("aid") or 0),
         }
+        if tls_on:
+            out["tls"] = {"enabled": True, "server_name": d.get("sni") or d.get("host") or d["add"]}
+        net = d.get("net", "tcp")
+        if net == "ws":
+            out["transport"] = {"type": "ws", "path": d.get("path") or "/"}
+            if d.get("host"):
+                out["transport"]["headers"] = {"Host": d["host"]}
+        elif net == "grpc":
+            out["transport"] = {"type": "grpc", "service_name": d.get("path", "")}
+        return out
+    if uri.startswith("trojan://"):
+        p = urlsplit(uri)
+        q = parse_qs(p.query)
+        tls = {"enabled": True}
+        if q.get("sni", [""])[0]:
+            tls["server_name"] = q["sni"][0]
+        out = {
+            "type": "trojan", "tag": "node", "server": p.hostname,
+            "server_port": p.port, "password": unquote(p.username or ""),
+            "tls": tls,
+        }
+        return out
+    if uri.startswith("ss://"):
+        raw = uri[5:].split("#", 1)[0].split("?", 1)[0]
+        if "@" not in raw:
+            decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode()
+            raw = decoded
+        userinfo, address = raw.rsplit("@", 1)
+        if ":" not in userinfo:
+            userinfo = base64.urlsafe_b64decode(userinfo + "=" * (-len(userinfo) % 4)).decode()
+        method, password = userinfo.split(":", 1)
+        hostport = urlsplit("//" + address)
+        return {
+            "type": "shadowsocks", "tag": "node", "server": hostport.hostname,
+            "server_port": hostport.port, "method": method, "password": unquote(password),
+        }
+    raise ValueError("Неподдерживаемый протокол")
 
-    return outbound
+def build_singbox_config(uri, socks_port):
+    outbound = make_outbound(uri)
+    config = {
+        "log": {"level": "error"},
+        "inbounds": [{
+            "type": "socks", "tag": "local-socks",
+            "listen": "127.0.0.1", "listen_port": socks_port,
+        }],
+        "outbounds": [outbound, {"type": "direct", "tag": "direct"}],
+        "route": {"final": "node"},
+    }
+    return config
 
+async def free_port():
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
 
-def get_free_port():
-    with socket.socket(
-        socket.AF_INET,
-        socket.SOCK_STREAM
-    ) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-async def wait_for_socks(process, port):
-    """Ожидает готовности локального SOCKS-входа."""
-
-    deadline = asyncio.get_running_loop().time() + 8
-
-    while asyncio.get_running_loop().time() < deadline:
+async def wait_socks(port, process):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
         if process.returncode is not None:
-            raise RuntimeError(
-                "sing-box завершился при запуске"
-            )
-
+            raise RuntimeError("sing-box завершился до запуска локального SOCKS")
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(
-                    "127.0.0.1",
-                    port
-                ),
-                timeout=0.5
-            )
-
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
             writer.close()
             await writer.wait_closed()
-
             return
-
-        except (OSError, asyncio.TimeoutError):
+        except OSError:
             await asyncio.sleep(0.2)
+    raise TimeoutError("Локальный SOCKS sing-box не запустился")
 
-    raise TimeoutError("SOCKS-вход не запустился")
+async def http_get_via_proxy(port, url):
+    connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{port}")
+    timeout = aiohttp.ClientTimeout(total=CHECK_TIMEOUT)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        async with session.get(url, allow_redirects=True) as response:
+            await response.read()
+            return 200 <= response.status < 400
 
-
-async def check_through_singbox(config):
-    """Проверяет конфиг через локальный SOCKS-туннель."""
-
-    process = None
-
-    try:
-        node = build_node(config)
-        port = get_free_port()
-
-        outbounds = []
-
-        base = parse_base_proxy()
-
-        if base:
-            outbounds.append(base)
-
-        outbounds.append(node)
-
-        sing_config = {
-            "log": {
-                "level": "error"
-            },
-
-            "inbounds": [
-                {
-                    "type": "socks",
-                    "tag": "local",
-                    "listen": "127.0.0.1",
-                    "listen_port": port
-                }
-            ],
-
-            "outbounds": outbounds,
-
-            "route": {
-                "final": "node"
-            }
-        }
-
-        with tempfile.TemporaryDirectory(
-            prefix="proxy_check_"
-        ) as temp_dir:
-
-            config_path = Path(temp_dir) / "config.json"
-
-            config_path.write_text(
-                json.dumps(sing_config),
-                encoding="utf-8"
-            )
-
-            process = await asyncio.create_subprocess_exec(
-                SING_BOX_PATH,
-                "run",
-                "-c",
-                str(config_path),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
-            )
-
-            await wait_for_socks(process, port)
-
-            connector = ProxyConnector.from_url(
-                f"socks5://127.0.0.1:{port}"
-            )
-
-            timeout = aiohttp.ClientTimeout(
-                total=CHECK_TIMEOUT
-            )
-
-            async with aiohttp.ClientSession(
-                connector=connector,
-                timeout=timeout
-            ) as session:
-
-                async with session.get(
-                    CHECK_URL,
-                    allow_redirects=False
-                ) as response:
-
-                    return response.status in (200, 204)
-
-    except Exception as error:
-        logger.debug(
-            "Ошибка проверки %s: %s",
-            config.get("ip"),
-            error
-        )
-
+async def check_one(uri, cache, lock):
+    now = int(time.time())
+    old = cache.get(uri)
+    interval = RECHECK_AFTER_HOURS * 3600
+    if old and now - int(old.get("last_checked", 0)) < interval:
+        log.info("Пропуск по dead cache (повтор через 2 часа): %s", uri[:70])
         return False
 
+    port = await free_port()
+    config = build_singbox_config(uri, port)
+    process = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False)
+            config_path = f.name
+        process = await asyncio.create_subprocess_exec(
+            SING_BOX_PATH, "run", "-c", config_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await wait_socks(port, process)
+        checks = {}
+        for name, url in CHECK_URLS.items():
+            try:
+                checks[name] = await http_get_via_proxy(port, url)
+            except Exception:
+                checks[name] = False
+        success = any(checks.values())
+        if success:
+            log.info("Рабочий конфиг: %s", uri[:90])
+            async with lock:
+                cache.pop(uri, None)
+            return True
+        log.info("Не прошёл HTTP GET: %s", uri[:90])
+        async with lock:
+            cache[uri] = {
+                "last_checked": now,
+                "checks": checks,
+                "first_failed": old.get("first_failed", now) if old else now,
+            }
+        return False
+    except Exception as exc:
+        log.warning("Ошибка проверки %s: %s", uri[:70], exc)
+        async with lock:
+            cache[uri] = {
+                "last_checked": now,
+                "checks": {},
+                "error": str(exc)[:300],
+                "first_failed": old.get("first_failed", now) if old else now,
+            }
+        return False
     finally:
         if process and process.returncode is None:
             process.terminate()
-
             try:
-                await asyncio.wait_for(
-                    process.wait(),
-                    timeout=3
-                )
-
+                await asyncio.wait_for(process.wait(), timeout=3)
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
-
+        if "config_path" in locals():
+            try:
+                os.unlink(config_path)
+            except OSError:
+                pass
 
 async def check_all(configs):
-    """Проверяет список конфигов и обновляет dead cache."""
+    cache = load_json(DEAD_CACHE_FILE, {})
+    lock = asyncio.Lock()
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 
-    cache = load_cache()
-    alive = []
-
-    semaphore = asyncio.Semaphore(
-        MAX_CONCURRENT_CHECKS
-    )
-
-    async def check_one(config):
-        key = (
-            f'{config["ip"]}:{config["sni"]}'
-        )
-
-        if cache_is_fresh(cache.get(key, {})):
-            logger.info(
-                "[SKIP] Пропущен из кеша: %s",
-                key
-            )
-            return None
-
+    async def limited(uri):
         async with semaphore:
-            result = await check_through_singbox(config)
+            return await check_one(uri, cache, lock)
 
-        if result:
-            logger.info(
-                "[ALIVE] Успешно проверен %s",
-                config["ip"]
-            )
+    results = await asyncio.gather(*(limited(x) for x in configs), return_exceptions=True)
+    for uri, result in zip(configs, results):
+        if isinstance(result, Exception):
+            log.exception("Необработанная ошибка проверки %s: %s", uri[:70], result)
 
-            cache.pop(key, None)
+    # Рабочий файл — накопительный архив: старые записи не удаляются.
+    existing = set()
+    if WORKING_FILE.exists():
+        existing.update(x.strip() for x in WORKING_FILE.read_text(encoding="utf-8").splitlines() if x.strip())
+    for uri, result in zip(configs, results):
+        if result is True:
+            existing.add(uri)
+    WORKING_FILE.write_text("\n".join(sorted(existing)) + ("\n" if existing else ""), encoding="utf-8")
 
-            return config
-
-        logger.warning(
-            "[DEAD] Сервер упал в кеш: %s",
-            key
-        )
-
-        cache[key] = {
-            "ip": config["ip"],
-            "sni": config["sni"],
-            "timestamp": datetime.now(
-                timezone.utc
-            ).isoformat()
-        }
-
-        return False
-
-    results = await asyncio.gather(
-        *(check_one(config) for config in configs),
-        return_exceptions=True
-    )
-
-    for result in results:
-        if isinstance(result, dict):
-            alive.append(result)
-
-        elif isinstance(result, Exception):
-            logger.error(
-                "Ошибка задачи проверки: %s",
-                result
-            )
-
-    cache = {
-        key: value
-        for key, value in cache.items()
-        if cache_is_fresh(value)
-    }
-
-    save_cache(cache)
-
-    logger.info(
-        "Проверка завершена. Рабочих серверов: %d",
-        len(alive)
-    )
-
-    return alive
+    # Dead cache хранится бессрочно; timestamp лишь определяет момент повторной проверки.
+    save_json_atomic(DEAD_CACHE_FILE, cache)
+    return [uri for uri, result in zip(configs, results) if result is True]

@@ -1,563 +1,202 @@
 import asyncio
-import aiohttp
 import base64
+import ipaddress
 import json
 import logging
 import re
-import socket
-import ipaddress
+from pathlib import Path
+from urllib.parse import urlsplit, parse_qs, unquote
 
-from io import BytesIO
-from urllib.parse import urlsplit, parse_qs
+import aiohttp
 from bs4 import BeautifulSoup
-
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 from config import (
-    SOURCES_FILE,
-    TG_FILE,
-    WHITELIST_FILE,
-    TG_API_ID,
-    TG_API_HASH,
-    TG_SESSION_STRING,
-    REQUEST_TIMEOUT,
-    MAX_DOWNLOAD_SIZE,
-    TG_MESSAGES_LIMIT,
+    SOURCES_FILE, TG_FILE, WHITELIST_FILE,
+    TG_API_ID, TG_API_HASH, TG_SESSION_STRING,
+    REQUEST_TIMEOUT, MAX_DOWNLOAD_SIZE, TG_MESSAGES_LIMIT,
     SUPPORTED_PROTOCOLS,
 )
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
+URI_RE = re.compile(r'(?:vless|vmess|trojan|ss)://[^\s<>"\\']+', re.I)
 
-CONFIG_PATTERN = re.compile(
-    r'(?:vless|vmess|trojan)://[^\s<>"\']+',
-    re.IGNORECASE
-)
-
-
-def read_lines(path):
-    if not path.exists():
-        logger.warning("Файл отсутствует: %s", path.name)
-        return []
-
+def read_text(path):
     try:
-        return [
-            line.strip()
-            for line in path.read_text(
-                encoding="utf-8-sig"
-            ).splitlines()
-            if line.strip()
-            and not line.strip().startswith("#")
-        ]
-
-    except OSError:
-        logger.exception("Ошибка чтения %s", path.name)
-        return []
-
-
-def load_whitelist():
-    """Формат строки: IP|SNI."""
-
-    pairs = set()
-
-    for line in read_lines(WHITELIST_FILE):
-        try:
-            ip, sni = line.split("|", 1)
-
-            ip = str(
-                ipaddress.ip_address(ip.strip())
-            )
-
-            sni = sni.strip().lower().rstrip(".")
-
-            if not sni:
-                continue
-
-            pairs.add((ip, sni))
-
-        except ValueError:
-            logger.warning(
-                "Некорректная строка whitelist: %s",
-                line
-            )
-
-    logger.info(
-        "Whitelist загружен: %d пар IP/SNI",
-        len(pairs)
-    )
-
-    return pairs
-
-
-def decode_base64_text(content):
-    content = content.strip()
-
-    if not content:
-        return content
-
-    compact = "".join(content.split())
-
-    try:
-        padded = compact + "=" * (-len(compact) % 4)
-
-        decoded = base64.b64decode(
-            padded,
-            altchars=b"-_",
-            validate=True
-        ).decode("utf-8-sig")
-
-        if any(
-            protocol in decoded.lower()
-            for protocol in SUPPORTED_PROTOCOLS
-        ):
-            return decoded
-
-    except Exception:
-        pass
-
-    return content
-
-
-def parse_config(uri):
-    try:
-        protocol = uri.split("://", 1)[0].lower()
-
-        if protocol not in ("vless", "vmess", "trojan"):
-            return None
-
-        if protocol == "vmess":
-            encoded = uri.split("://", 1)[1]
-            encoded += "=" * (-len(encoded) % 4)
-
-            decoded = base64.urlsafe_b64decode(
-                encoded
-            ).decode("utf-8")
-
-            data = json.loads(decoded)
-
-            server = data.get("add", "")
-            sni = (
-                data.get("sni")
-                or data.get("host")
-                or ""
-            )
-
-        else:
-            parsed = urlsplit(uri)
-            params = parse_qs(parsed.query)
-
-            server = parsed.hostname or ""
-
-            sni = (
-                params.get("sni", [""])[0]
-                or params.get("serverName", [""])[0]
-            )
-
-        if not server or not sni:
-            return None
-
-        return {
-            "raw": uri,
-            "protocol": protocol,
-            "server": server,
-            "sni": sni.lower().rstrip("."),
-        }
-
-    except Exception as error:
-        logger.debug("Ошибка разбора конфига: %s", error)
-        return None
-
-
-def extract_json_configs(obj):
-    results = []
-
-    if isinstance(obj, dict):
-        protocol = str(
-            obj.get("type", obj.get("protocol", ""))
-        ).lower()
-
-        server = (
-            obj.get("server")
-            or obj.get("address")
-            or obj.get("host")
-            or ""
-        )
-
-        tls = obj.get("tls", {})
-        if not isinstance(tls, dict):
-            tls = {}
-
-        sni = (
-            obj.get("sni")
-            or obj.get("server_name")
-            or obj.get("servername")
-            or tls.get("server_name", "")
-        )
-
-        if (
-            protocol in ("vless", "vmess", "trojan")
-            and server
-            and sni
-        ):
-            results.append({
-                "raw": json.dumps(
-                    obj,
-                    ensure_ascii=False
-                ),
-                "protocol": protocol,
-                "server": str(server),
-                "sni": str(sni).lower().rstrip("."),
-            })
-
-        for value in obj.values():
-            results.extend(
-                extract_json_configs(value)
-            )
-
-    elif isinstance(obj, list):
-        for item in obj:
-            results.extend(
-                extract_json_configs(item)
-            )
-
-    elif isinstance(obj, str):
-        results.extend(extract_configs(obj))
-
-    return results
-
-
-def extract_configs(text):
-    results = []
-
-    for match in CONFIG_PATTERN.findall(text):
-        config = parse_config(match.rstrip(".,;"))
-
-        if config:
-            results.append(config)
-
-    decoder = json.JSONDecoder()
-
-    for match in re.finditer(r"[\[{]", text):
-        try:
-            obj, _ = decoder.raw_decode(
-                text[match.start():]
-            )
-
-            results.extend(
-                extract_json_configs(obj)
-            )
-
-        except (json.JSONDecodeError, ValueError):
-            continue
-
-    unique = {}
-
-    for config in results:
-        unique[config["raw"]] = config
-
-    return list(unique.values())
-
-
-async def resolve_server(server):
-    try:
-        return str(ipaddress.ip_address(server))
-
-    except ValueError:
-        pass
-
-    try:
-        loop = asyncio.get_running_loop()
-
-        records = await asyncio.wait_for(
-            loop.getaddrinfo(
-                server,
-                None,
-                type=socket.SOCK_STREAM
-            ),
-            timeout=5
-        )
-
-        for record in records:
-            try:
-                return str(
-                    ipaddress.ip_address(record[4][0])
-                )
-
-            except ValueError:
-                continue
-
-    except Exception:
-        logger.warning(
-            "Не удалось определить IP: %s",
-            server
-        )
-
-    return None
-
-
-async def apply_whitelist(configs, allowed_pairs):
-    accepted = []
-    unique = set()
-
-    for config in configs:
-        server_ip = await resolve_server(
-            config["server"]
-        )
-
-        sni = config["sni"].lower().rstrip(".")
-
-        if not server_ip or (server_ip, sni) not in allowed_pairs:
-            logger.warning(
-                "[WARN] Найден конфиг, но он не в белом списке: %s | %s",
-                config["server"],
-                sni
-            )
-            continue
-
-        config["ip"] = server_ip
-
-        key = (
-            server_ip,
-            sni,
-            config["raw"]
-        )
-
-        if key not in unique:
-            unique.add(key)
-            accepted.append(config)
-
-    return accepted
-
-
-async def fetch_source(session, url):
-    try:
-        logger.info("Загрузка источника: %s", url)
-
-        async with session.get(
-            url,
-            allow_redirects=True
-        ) as response:
-
-            response.raise_for_status()
-
-            content = await response.content.read(
-                MAX_DOWNLOAD_SIZE + 1
-            )
-
-            if len(content) > MAX_DOWNLOAD_SIZE:
-                logger.warning(
-                    "Источник превышает лимит размера: %s",
-                    url
-                )
-                return ""
-
-            text = content.decode(
-                "utf-8-sig",
-                errors="replace"
-            )
-
-            content_type = response.headers.get(
-                "Content-Type", ""
-            ).lower()
-
-            if (
-                "text/html" in content_type
-                or "<html" in text[:1000].lower()
-            ):
-                soup = BeautifulSoup(
-                    text,
-                    "html.parser"
-                )
-
-                text = soup.get_text(separator="\n")
-
-            return decode_base64_text(text)
-
-    except Exception:
-        logger.exception("Ошибка источника: %s", url)
+        return path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        log.warning("Файл не найден: %s", path.name)
         return ""
 
+def read_lines(path):
+    return [x.strip() for x in read_text(path).splitlines()
+            if x.strip() and not x.strip().startswith("#")]
 
-async def collect_web_sources():
-    sources = read_lines(SOURCES_FILE)
-    collected = []
+def decode_subscription(text):
+    text = text.strip()
+    if not text:
+        return ""
+    candidates = [text, re.sub(r"\s+", "", text)]
+    for candidate in candidates:
+        try:
+            padded = candidate + "=" * (-len(candidate) % 4)
+            decoded = base64.b64decode(padded, validate=False).decode("utf-8", "ignore")
+            if any(p in decoded.lower() for p in SUPPORTED_PROTOCOLS):
+                return decoded
+        except Exception:
+            pass
+    return text
 
-    timeout = aiohttp.ClientTimeout(
-        total=REQUEST_TIMEOUT
-    )
+def extract_configs(text):
+    text = decode_subscription(text)
+    found = URI_RE.findall(text)
+    cleaned = []
+    for item in found:
+        item = item.rstrip("),;]}>'\"")
+        if item.lower().startswith(SUPPORTED_PROTOCOLS):
+            cleaned.append(item)
+    # JSON-ссылки и JSON-массивы поддерживаются через URI-поля.
+    try:
+        obj = json.loads(text)
+        def walk(value):
+            if isinstance(value, str):
+                if value.lower().startswith(SUPPORTED_PROTOCOLS):
+                    cleaned.append(value.strip())
+            elif isinstance(value, dict):
+                for v in value.values():
+                    walk(v)
+            elif isinstance(value, list):
+                for v in value:
+                    walk(v)
+        walk(obj)
+    except Exception:
+        pass
+    return list(dict.fromkeys(cleaned))
 
-    async with aiohttp.ClientSession(
-        timeout=timeout,
-        headers={"User-Agent": "Mozilla/5.0"}
-    ) as session:
+def load_whitelist():
+    """Формат строк: IP|SNI. Комментарии начинаются с #."""
+    pairs = set()
+    for line in read_lines(WHITELIST_FILE):
+        line = line.strip().strip("-").strip()
+        if "|" in line:
+            ip, sni = line.split("|", 1)
+        elif re.search(r"\bip\s*:", line, re.I):
+            # YAML-подобные строки поддерживаются парсером ниже как отдельные ключи.
+            continue
+        else:
+            continue
+        try:
+            ip = str(ipaddress.ip_address(ip.strip().strip('"\\'')))
+            sni = sni.strip().strip('"\\'').lower().rstrip(".")
+            if sni:
+                pairs.add((ip, sni))
+        except ValueError:
+            log.warning("Некорректная строка whitelist: %s", line)
+    return pairs
 
-        for url in sources:
-            text = await fetch_source(session, url)
+def get_server_sni(uri):
+    try:
+        if uri.startswith("vmess://"):
+            raw = uri[8:]
+            data = json.loads(base64.b64decode(raw + "=" * (-len(raw) % 4)))
+            return data.get("add", ""), (data.get("sni") or data.get("host") or "").lower()
+        parsed = urlsplit(uri)
+        params = parse_qs(parsed.query)
+        return parsed.hostname or "", (params.get("sni", [""])[0] or "").lower().rstrip(".")
+    except Exception:
+        return "", ""
 
-            if text:
-                collected.extend(
-                    extract_configs(text)
-                )
+async def resolve_ips(host):
+    try:
+        ipaddress.ip_address(host)
+        return {str(ipaddress.ip_address(host))}
+    except ValueError:
+        pass
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(host, None, type=0)
+        return {x[4][0] for x in infos}
+    except Exception:
+        return set()
 
-    logger.info(
-        "Веб-источники: найдено %d конфигов",
-        len(collected)
-    )
-
-    return collected
-
-
-async def collect_telegram_sources():
-    if not all((
-        TG_API_ID,
-        TG_API_HASH,
-        TG_SESSION_STRING
-    )):
-        logger.warning(
-            "Telegram пропущен: отсутствуют секреты"
-        )
+async def apply_whitelist(configs):
+    allowed = load_whitelist()
+    if not allowed:
+        log.warning("Whitelist пуст или не распознан; фильтрация остановлена, конфиги не пропускаются.")
         return []
+    result = []
+    for uri in configs:
+        host, sni = get_server_sni(uri)
+        ips = await resolve_ips(host) if host else set()
+        if any((ip, sni) in allowed for ip in ips):
+            result.append(uri)
+    log.info("Whitelist: %d из %d конфигов прошло", len(result), len(configs))
+    return result
 
+async def fetch_http(session, url):
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as resp:
+        data = await resp.content.read(MAX_DOWNLOAD_SIZE + 1)
+        if len(data) > MAX_DOWNLOAD_SIZE:
+            raise ValueError("Источник превышает лимит загрузки")
+        return data.decode("utf-8", "ignore")
+
+async def collect_web():
+    sources = read_lines(SOURCES_FILE)
+    results = []
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        for source in sources:
+            source = source.strip()
+            if source.lower().startswith(SUPPORTED_PROTOCOLS):
+                results.extend(extract_configs(source))
+                continue
+            if not source.startswith(("http://", "https://")):
+                log.warning("Пропущен неизвестный источник: %s", source[:100])
+                continue
+            try:
+                body = await fetch_http(session, source)
+                soup = BeautifulSoup(body, "html.parser")
+                text = soup.get_text("\n") if "<html" in body[:1000].lower() else body
+                results.extend(extract_configs(text))
+            except Exception:
+                log.exception("Ошибка HTTP-источника: %s", source)
+    log.info("Веб-источники: найдено %d конфигов", len(results))
+    return results
+
+async def collect_telegram():
     channels = read_lines(TG_FILE)
-
     if not channels:
         return []
-
-    collected = []
-
-    client = TelegramClient(
-        StringSession(TG_SESSION_STRING),
-        int(TG_API_ID),
-        TG_API_HASH
-    )
-
+    if not (TG_API_ID and TG_API_HASH and TG_SESSION_STRING):
+        log.warning("Telegram пропущен: не заданы TG_API_ID/TG_API_HASH/TG_SESSION_STRING")
+        return []
+    client = TelegramClient(StringSession(TG_SESSION_STRING), int(TG_API_ID), TG_API_HASH)
+    results = []
     try:
-        await client.connect()
-
-        if not await client.is_user_authorized():
-            logger.error(
-                "Telegram-сессия не авторизована"
-            )
-            return []
-
+        await client.start()
         for channel in channels:
-            channel = channel.lstrip("@")
-
-            logger.info(
-                "[INFO] Начинаем парсинг канала @%s",
-                channel
-            )
-
             try:
                 entity = await client.get_entity(channel)
-
-                async for message in client.iter_messages(
-                    entity,
-                    limit=TG_MESSAGES_LIMIT
-                ):
-                    text = message.message or ""
-
-                    if text:
-                        collected.extend(
-                            extract_configs(
-                                decode_base64_text(text)
-                            )
-                        )
-
-                    if (
-                        message.file
-                        and message.file.name
-                        and message.file.name.lower().endswith(
-                            (".txt", ".json")
-                        )
-                    ):
-                        buffer = BytesIO()
-
-                        try:
-                            await client.download_media(
-                                message,
-                                file=buffer
-                            )
-
-                            file_text = buffer.getvalue().decode(
-                                "utf-8-sig",
-                                errors="replace"
-                            )
-
-                            collected.extend(
-                                extract_configs(
-                                    decode_base64_text(file_text)
-                                )
-                            )
-
-                        except Exception:
-                            logger.exception(
-                                "Ошибка загрузки Telegram-вложения"
-                            )
-
-                        finally:
-                            buffer.close()
-
+                async for msg in client.iter_messages(entity, limit=TG_MESSAGES_LIMIT):
+                    if msg.message:
+                        results.extend(extract_configs(msg.message))
+                    if msg.media and getattr(msg, "file", None):
+                        name = (msg.file.name or "").lower()
+                        if name.endswith((".txt", ".json", ".yaml", ".yml")):
+                            data = await client.download_media(msg, file=bytes)
+                            if data:
+                                results.extend(extract_configs(data.decode("utf-8", "ignore")))
             except Exception:
-                logger.exception(
-                    "Ошибка канала @%s",
-                    channel
-                )
-
+                log.exception("Ошибка Telegram-канала: %s", channel)
     finally:
-        if client.is_connected():
-            await client.disconnect()
-
-    logger.info(
-        "Telegram: найдено %d конфигов",
-        len(collected)
-    )
-
-    return collected
-
+        await client.disconnect()
+    log.info("Telegram: найдено %d конфигов", len(results))
+    return results
 
 async def collect_all():
-    logger.info("Начинаем сбор источников")
-
-    results = await asyncio.gather(
-        collect_web_sources(),
-        collect_telegram_sources(),
-        return_exceptions=True
-    )
-
-    configs = []
-
-    for result in results:
-        if isinstance(result, Exception):
-            logger.error(
-                "Ошибка сборщика: %s",
-                result
-            )
-        else:
-            configs.extend(result)
-
-    unique = {
-        config["raw"]: config
-        for config in configs
-    }
-
-    configs = list(unique.values())
-
-    logger.info(
-        "Всего уникальных конфигов: %d",
-        len(configs)
-    )
-
-    allowed_pairs = load_whitelist()
-
-    filtered = await apply_whitelist(
-        configs,
-        allowed_pairs
-    )
-
-    logger.info(
-        "После whitelist осталось: %d",
-        len(filtered)
-    )
-
-    return filtered
+    log.info("Начинаем сбор источников")
+    web, tg = await asyncio.gather(collect_web(), collect_telegram())
+    all_configs = list(dict.fromkeys(web + tg))
+    log.info("Всего уникальных конфигов: %d", len(all_configs))
+    return await apply_whitelist(all_configs)
