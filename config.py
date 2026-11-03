@@ -8,7 +8,7 @@ SOURCES_FILE = BASE_DIR / "sources.txt"
 TG_FILE = BASE_DIR / "tg.txt"
 
 # Единый whitelist
-WHITELIST_FILE = BASE_DIR / "whitelist.txt"
+WHITELIST_FILE = BASE_DIR / "ru.sni.yaml.txt"
 
 # Результаты
 WORKING_FILE = BASE_DIR / "working_proxies.txt"
