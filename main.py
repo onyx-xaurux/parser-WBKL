@@ -1,399 +1,100 @@
 import asyncio
 import logging
-import json
 import sys
-
 from pathlib import Path
-from datetime import datetime, timezone
 
-from config import settings, setup_logging
+from config import WHITELIST_IPS, WHITELIST_SNI, WORKING_PROXIES, CHECK_TIMEOUT
 from parser import parse_text
 from checker import Checker
 
-
-logger = logging.getLogger("proxy_scanner")
-
-
-class Scanner:
-
-    def __init__(self):
-        self.checker = Checker()
-
-        self.addresses = set()
-        self.hosts = set()
-
-        self.stats = {
-            "sources_processed": 0,
-            "sources_failed": 0,
-            "addresses_found": 0,
-            "hosts_found": 0,
-            "checked": 0,
-            "alive": 0,
-            "dead": 0,
-            "skipped_from_cache": 0,
-        }
-
-        self.semaphore = asyncio.Semaphore(10)
-
-    async def initialize(self):
-        logger.info("Initializing scanner")
-
-        self.checker.initialize()
-
-        logger.info("Scanner initialized")
-
-    async def load_local_sources(self):
-        """
-        Загружает текстовые источники
-        из локальных файлов.
-        """
-
-        source_files = [
-            settings.sources_file,
-            settings.telegram_sources_file,
-        ]
-
-        for source_file in source_files:
-
-            if not source_file.exists():
-                logger.warning(
-                    "Source file not found: %s",
-                    source_file
-                )
-                continue
-
-            try:
-                text = source_file.read_text(
-                    encoding="utf-8"
-                )
-
-                if not text.strip():
-                    continue
-
-                await self.process_text(
-                    text,
-                    source_file.name
-                )
-
-            except Exception:
-                self.stats["sources_failed"] += 1
-
-                logger.exception(
-                    "Failed to read source: %s",
-                    source_file
-                )
-
-    async def process_text(
-        self,
-        text: str,
-        source_name: str
-    ):
-        """
-        Обрабатывает текстовый источник.
-        """
-
-        try:
-            result = parse_text(text)
-
-            for address in result.addresses:
-                self.addresses.add(
-                    f"{address.ip}:{address.port}"
-                )
-
-            for host in result.hosts:
-                self.hosts.add(host.value)
-
-            self.stats["sources_processed"] += 1
-
-            logger.info(
-                "[%s] Found %d addresses and %d hosts",
-                source_name,
-                len(result.addresses),
-                len(result.hosts)
-            )
-
-        except Exception:
-            self.stats["sources_failed"] += 1
-
-            logger.exception(
-                "Parser failed for source: %s",
-                source_name
-            )
-
-    def export_results(self):
-        """
-        Сохраняет результаты парсинга.
-        Формат parsed_results.json не изменяется.
-        """
-
-        output = {
-            "generated_at": datetime.now(
-                timezone.utc
-            ).isoformat(),
-
-            "statistics": {
-                "sources_processed": self.stats["sources_processed"],
-                "sources_failed": self.stats["sources_failed"],
-                "addresses_found": len(self.addresses),
-                "hosts_found": len(self.hosts),
-            },
-
-            "addresses": sorted(self.addresses),
-
-            "hosts": sorted(self.hosts),
-        }
-
-        output_path = Path("parsed_results.json")
-
-        temp_path = output_path.with_suffix(
-            ".json.tmp"
-        )
-
-        try:
-            temp_path.write_text(
-                json.dumps(
-                    output,
-                    ensure_ascii=False,
-                    indent=4
-                ),
-                encoding="utf-8"
-            )
-
-            temp_path.replace(output_path)
-
-            logger.info(
-                "Results saved: %s",
-                output_path
-            )
-
-        except OSError:
-            logger.exception(
-                "Failed to save parsed results"
-            )
-            raise
-
-    async def check_pairs(self):
-        """
-        Проверка комбинаций address + host.
-
-        Максимум 10 одновременных проверок.
-        """
-
-        working = set()
-
-        pairs = [
-            (address, host)
-            for address in sorted(self.addresses)
-            for host in sorted(self.hosts)
-        ]
-
-        logger.info(
-            "Total pairs to check: %d",
-            len(pairs)
-        )
-
-        async def check_one(address, host):
-
-            async with self.semaphore:
-
-                # Проверяем кеш
-                if self.checker.is_cached(address):
-
-                    self.stats["skipped_from_cache"] += 1
-
-                    logger.info(
-                        "[SKIPPED] %s#%s cached",
-                        address,
-                        host
-                    )
-
-                    return
-
-                self.stats["checked"] += 1
-
-                try:
-                    result = await self.checker.check(
-                        address,
-                        host
-                    )
-
-                    if result:
-                        working.add(
-                            f"{address}#{host}"
-                        )
-
-                        self.stats["alive"] += 1
-
-                    else:
-                        self.stats["dead"] += 1
-
-                except Exception:
-
-                    self.stats["dead"] += 1
-
-                    logger.exception(
-                        "Unexpected check error: %s#%s",
-                        address,
-                        host
-                    )
-
-        await asyncio.gather(
-            *[
-                check_one(address, host)
-                for address, host in pairs
-            ]
-        )
-
-        # Записываем рабочие пары
-        output_path = settings.working_proxies_file
-
-        output_path.parent.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
-        output_path.write_text(
-            "".join(
-                f"{item}\n"
-                for item in sorted(working)
-            ),
-            encoding="utf-8"
-        )
-
-        logger.info(
-            "Working pairs saved: %d",
-            len(working)
-        )
-
-    def print_statistics(self):
-
-        logger.info("=" * 45)
-        logger.info("SCAN STATISTICS")
-        logger.info("=" * 45)
-
-        logger.info(
-            "Sources processed: %d",
-            self.stats["sources_processed"]
-        )
-
-        logger.info(
-            "Sources failed: %d",
-            self.stats["sources_failed"]
-        )
-
-        logger.info(
-            "Addresses found: %d",
-            self.stats["addresses_found"]
-        )
-
-        logger.info(
-            "Hosts found: %d",
-            self.stats["hosts_found"]
-        )
-
-        logger.info(
-            "Checked: %d",
-            self.stats["checked"]
-        )
-
-        logger.info(
-            "Alive: %d",
-            self.stats["alive"]
-        )
-
-        logger.info(
-            "Dead: %d",
-            self.stats["dead"]
-        )
-
-        logger.info(
-            "Skipped from cache: %d",
-            self.stats["skipped_from_cache"]
-        )
-
-        logger.info(
-            "Cached dead entries: %d",
-            self.checker.cache.count()
-        )
-
-        logger.info("=" * 45)
-
-    async def run(self):
-
-        await self.initialize()
-
-        logger.info("Starting scanner")
-
-        try:
-            # Этап 1: получение локальных источников
-            await self.load_local_sources()
-
-            self.stats["addresses_found"] = len(
-                self.addresses
-            )
-
-            self.stats["hosts_found"] = len(
-                self.hosts
-            )
-
-            # Этап 2: сохранение результатов парсинга
-            self.export_results()
-
-            # Этап 3: проверка комбинаций
-            if self.addresses and self.hosts:
-
-                await self.check_pairs()
-
-            else:
-                logger.warning(
-                    "No addresses or hosts found. "
-                    "Skipping checks."
-                )
-
-                # Не затираем предыдущий список рабочих пар
-                logger.info(
-                    "Existing working_proxies.txt preserved"
-                )
-
-        finally:
-            # Сохраняем кеш в любом случае
-            self.checker.cache.save()
-
-            self.print_statistics()
-
-            logger.info("Scanner finished")
-
-
-async def async_main():
-
-    setup_logging()
-
-    scanner = Scanner()
-
-    try:
-        await scanner.run()
-
-    except KeyboardInterrupt:
-        logger.warning("Scanner interrupted")
-
-    except Exception:
-        logger.exception(
-            "Fatal scanner error"
-        )
-
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(message)s')
+logger = logging.getLogger("scanner")
+
+async def main():
+    # 1. Загружаем белые списки
+    if not WHITELIST_IPS.exists() or not WHITELIST_SNI.exists():
+        logger.error("Whitelists not found! Run fetch_whitelist.py first.")
         sys.exit(1)
 
+    allowed_ips = set(WHITELIST_IPS.read_text(encoding="utf-8").splitlines())
+    allowed_snis = set(WHITELIST_SNI.read_text(encoding="utf-8").splitlines())
+    logger.info(f"Loaded {len(allowed_ips)} allowed IPs and {len(allowed_snis)} SNIs")
 
-def main():
+    # 2. Читаем локальные источники (если есть)
+    sources = Path("sources.txt")
+    text = ""
+    if sources.exists():
+        text = sources.read_text(encoding="utf-8")
+    else:
+        logger.warning("sources.txt not found, using empty text")
 
-    try:
-        asyncio.run(async_main())
+    # 3. Парсим
+    found_ips, found_hosts = parse_text(text)
+    logger.info(f"Found {len(found_ips)} IPs and {len(found_hosts)} Hosts in sources")
 
-    except KeyboardInterrupt:
-        logger.warning(
-            "Application stopped by user"
-        )
+    # 4. Фильтруем по белому списку
+    # Берем только те домены, что есть в белом списке
+    valid_snis = [h for h in found_hosts if h in allowed_snis]
+    logger.info(f"Filtered to {len(valid_snis)} valid SNIs")
 
+    if not valid_snis:
+        logger.warning("No valid SNIs found. Nothing to check.")
+        return
+
+    checker = Checker()
+    alive = []
+
+    # 5. Проверяем
+    # Для каждой связки IP:PORT из источников + валидный SNI
+    tasks = []
+    for ip_port in found_ips:
+        ip = ip_port.split(":")[0]
+        if ip not in allowed_ips:
+            continue # Пропускаем IP, которых нет в белом списке
+        
+        for sni in valid_snis:
+            tasks.append(checker.check(ip, sni))
+
+    if not tasks:
+        logger.warning("No valid pairs to check.")
+        return
+
+    logger.info(f"Starting check for {len(tasks)} pairs...")
+    results = await asyncio.gather(*tasks)
+
+    for task_idx, (ip_port, sni) in enumerate([(ip, sni) for ip in found_ips for sni in valid_snis]):
+        pass # тут нужно сопоставить результаты
+
+    # Так как gather не возвращает индексы, сделаем проще:
+    checked_results = []
+    for ip_port in found_ips:
+        ip = ip_port.split(":")[0]
+        if ip not in allowed_ips: continue
+        for sni in valid_snis:
+            checked_results.append((ip_port, sni))
+
+    # Пакетная проверка
+    sem = asyncio.Semaphore(50)
+    
+    async def check_pair(ip_port, sni):
+        async with sem:
+            ip = ip_port.split(":")[0]
+            is_alive = await checker.check(ip, sni)
+            if is_alive:
+                logger.info(f"[ALIVE] {ip_port}#{sni}")
+                return f"{ip_port}#{sni}"
+            return None
+
+    final_tasks = [check_pair(ip, sni) for ip, sni in checked_results]
+    final_results = await asyncio.gather(*final_tasks)
+
+    alive = [r for r in final_results if r]
+    
+    # 6. Сохраняем результаты
+    WORKING_PROXIES.write_text("\n".join(alive), encoding="utf-8")
+    checker.save_cache()
+    
+    logger.info(f"Done! Alive: {len(alive)}. Saved to {WORKING_PROXIES}")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
