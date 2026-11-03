@@ -1,20 +1,46 @@
+import os
 from pathlib import Path
 
-# Пути к файлам
-PARSED_RESULTS = Path("parsed_results.json")
-WORKING_PROXIES = Path("working_proxies.txt")
-DEAD_CACHE = Path("dead_cache.json")
+# Корневая директория проекта
+BASE_DIR = Path(__file__).resolve().parent
 
-# Белые списки
-WHITELIST_IPS = Path("whitelist_ips.txt")
-WHITELIST_SNI = Path("whitelist_sni.txt")
+# Файлы проекта
+SOURCES_FILE = BASE_DIR / "sources.txt"
+TG_FILE = BASE_DIR / "tg.txt"
 
-# Источники
-LOCAL_SOURCES = Path("sources.txt")
-WEB_SOURCES = Path("web_sources.txt")
-TG_SOURCES = Path("tg_sources.txt")
+WHITELIST_IPS_FILE = BASE_DIR / "whitelist_ips.txt"
+WHITELIST_SNI_FILE = BASE_DIR / "whitelist_sni.txt"
+
+WORKING_FILE = BASE_DIR / "working_proxies.txt"
+DEAD_CACHE_FILE = BASE_DIR / "dead_cache.json"
+
+# Telegram
+TG_API_ID = os.getenv("TG_API_ID", "")
+TG_API_HASH = os.getenv("TG_API_HASH", "")
+TG_SESSION_STRING = os.getenv("TG_SESSION_STRING", "")
+
+# Базовый SOCKS/HTTP-прокси
+BASE_PROXY = os.getenv("BASE_PROXY", "").strip()
 
 # Настройки проверки
-CHECK_TIMEOUT = 5  # секунд на проверку одного сервера
-MAX_CONCURRENT_CHECKS = 50  # одновременных проверок
-CACHE_TTL_HOURS = 24  # сколько часов помнить мертвый сервер
+CHECK_URL = "https://cp.cloudflare.com/generate_204"
+
+CHECK_TIMEOUT = 15
+MAX_CONCURRENT_CHECKS = 20
+
+# Кеш нерабочих серверов
+DEAD_CACHE_HOURS = 2
+
+# Ограничения загрузки
+REQUEST_TIMEOUT = 20
+MAX_DOWNLOAD_SIZE = 5 * 1024 * 1024
+
+# Поддерживаемые протоколы
+SUPPORTED_PROTOCOLS = (
+    "vless://",
+    "vmess://",
+    "trojan://",
+)
+
+# Кодировка
+ENCODING = "utf-8"
