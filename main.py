@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import json
@@ -8,7 +7,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from config import settings, setup_logging
-from parser import parse_text, parsed_to_dict
+from parser import parse_text
 from checker import Checker
 
 
@@ -16,6 +15,7 @@ logger = logging.getLogger("proxy_scanner")
 
 
 class Scanner:
+
     def __init__(self):
         self.checker = Checker()
 
@@ -27,7 +27,13 @@ class Scanner:
             "sources_failed": 0,
             "addresses_found": 0,
             "hosts_found": 0,
+            "checked": 0,
+            "alive": 0,
+            "dead": 0,
+            "skipped_from_cache": 0,
         }
+
+        self.semaphore = asyncio.Semaphore(10)
 
     async def initialize(self):
         logger.info("Initializing scanner")
@@ -38,7 +44,8 @@ class Scanner:
 
     async def load_local_sources(self):
         """
-        Загружает текстовые источники из локальных файлов.
+        Загружает текстовые источники
+        из локальных файлов.
         """
 
         source_files = [
@@ -76,9 +83,13 @@ class Scanner:
                     source_file
                 )
 
-    async def process_text(self, text: str, source_name: str):
+    async def process_text(
+        self,
+        text: str,
+        source_name: str
+    ):
         """
-        Обрабатывает один текстовый источник.
+        Обрабатывает текстовый источник.
         """
 
         try:
@@ -111,7 +122,8 @@ class Scanner:
 
     def export_results(self):
         """
-        Сохраняет найденные данные в JSON.
+        Сохраняет результаты парсинга.
+        Формат parsed_results.json не изменяется.
         """
 
         output = {
@@ -119,7 +131,12 @@ class Scanner:
                 timezone.utc
             ).isoformat(),
 
-            "statistics": self.stats,
+            "statistics": {
+                "sources_processed": self.stats["sources_processed"],
+                "sources_failed": self.stats["sources_failed"],
+                "addresses_found": len(self.addresses),
+                "hosts_found": len(self.hosts),
+            },
 
             "addresses": sorted(self.addresses),
 
@@ -150,10 +167,106 @@ class Scanner:
             )
 
         except OSError:
-            logger.exception("Failed to save results")
+            logger.exception(
+                "Failed to save parsed results"
+            )
             raise
 
+    async def check_pairs(self):
+        """
+        Проверка комбинаций address + host.
+
+        Максимум 10 одновременных проверок.
+        """
+
+        working = set()
+
+        pairs = [
+            (address, host)
+            for address in sorted(self.addresses)
+            for host in sorted(self.hosts)
+        ]
+
+        logger.info(
+            "Total pairs to check: %d",
+            len(pairs)
+        )
+
+        async def check_one(address, host):
+
+            async with self.semaphore:
+
+                # Проверяем кеш
+                if self.checker.is_cached(address):
+
+                    self.stats["skipped_from_cache"] += 1
+
+                    logger.info(
+                        "[SKIPPED] %s#%s cached",
+                        address,
+                        host
+                    )
+
+                    return
+
+                self.stats["checked"] += 1
+
+                try:
+                    result = await self.checker.check(
+                        address,
+                        host
+                    )
+
+                    if result:
+                        working.add(
+                            f"{address}#{host}"
+                        )
+
+                        self.stats["alive"] += 1
+
+                    else:
+                        self.stats["dead"] += 1
+
+                except Exception:
+
+                    self.stats["dead"] += 1
+
+                    logger.exception(
+                        "Unexpected check error: %s#%s",
+                        address,
+                        host
+                    )
+
+        await asyncio.gather(
+            *[
+                check_one(address, host)
+                for address, host in pairs
+            ]
+        )
+
+        # Записываем рабочие пары
+        output_path = settings.working_proxies_file
+
+        output_path.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        output_path.write_text(
+            "".join(
+                f"{item}\n"
+                for item in sorted(working)
+            ),
+            encoding="utf-8"
+        )
+
+        logger.info(
+            "Working pairs saved: %d",
+            len(working)
+        )
+
     def print_statistics(self):
+
         logger.info("=" * 45)
         logger.info("SCAN STATISTICS")
         logger.info("=" * 45)
@@ -170,12 +283,32 @@ class Scanner:
 
         logger.info(
             "Addresses found: %d",
-            len(self.addresses)
+            self.stats["addresses_found"]
         )
 
         logger.info(
             "Hosts found: %d",
-            len(self.hosts)
+            self.stats["hosts_found"]
+        )
+
+        logger.info(
+            "Checked: %d",
+            self.stats["checked"]
+        )
+
+        logger.info(
+            "Alive: %d",
+            self.stats["alive"]
+        )
+
+        logger.info(
+            "Dead: %d",
+            self.stats["dead"]
+        )
+
+        logger.info(
+            "Skipped from cache: %d",
+            self.stats["skipped_from_cache"]
         )
 
         logger.info(
@@ -186,28 +319,53 @@ class Scanner:
         logger.info("=" * 45)
 
     async def run(self):
+
         await self.initialize()
 
         logger.info("Starting scanner")
 
-        await self.load_local_sources()
+        try:
+            # Этап 1: получение локальных источников
+            await self.load_local_sources()
 
-        self.stats["addresses_found"] = len(
-            self.addresses
-        )
+            self.stats["addresses_found"] = len(
+                self.addresses
+            )
 
-        self.stats["hosts_found"] = len(
-            self.hosts
-        )
+            self.stats["hosts_found"] = len(
+                self.hosts
+            )
 
-        self.export_results()
+            # Этап 2: сохранение результатов парсинга
+            self.export_results()
 
-        self.print_statistics()
+            # Этап 3: проверка комбинаций
+            if self.addresses and self.hosts:
 
-        logger.info("Scanner finished")
+                await self.check_pairs()
+
+            else:
+                logger.warning(
+                    "No addresses or hosts found. "
+                    "Skipping checks."
+                )
+
+                # Не затираем предыдущий список рабочих пар
+                logger.info(
+                    "Existing working_proxies.txt preserved"
+                )
+
+        finally:
+            # Сохраняем кеш в любом случае
+            self.checker.cache.save()
+
+            self.print_statistics()
+
+            logger.info("Scanner finished")
 
 
 async def async_main():
+
     setup_logging()
 
     scanner = Scanner()
@@ -219,16 +377,22 @@ async def async_main():
         logger.warning("Scanner interrupted")
 
     except Exception:
-        logger.exception("Fatal scanner error")
+        logger.exception(
+            "Fatal scanner error"
+        )
+
         sys.exit(1)
 
 
 def main():
+
     try:
         asyncio.run(async_main())
 
     except KeyboardInterrupt:
-        logger.warning("Application stopped by user")
+        logger.warning(
+            "Application stopped by user"
+        )
 
 
 if __name__ == "__main__":
