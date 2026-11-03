@@ -2,13 +2,13 @@ import asyncio
 import json
 import logging
 import os
+import socket
+import ssl
 import tempfile
 import time
 
 from pathlib import Path
-from dataclasses import dataclass
 from typing import Optional
-
 
 from config import settings, load_json, save_json
 
@@ -16,19 +16,8 @@ from config import settings, load_json, save_json
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class CacheEntry:
-    address: str
-    timestamp: float
-    reason: str
-
-
 class DeadCache:
-    """
-    Хранилище записей о ранее недоступных узлах.
-
-    TTL задаётся в секундах.
-    """
+    """Хранение ранее недоступных адресов с TTL."""
 
     def __init__(
         self,
@@ -52,7 +41,7 @@ class DeadCache:
         return time.time() - timestamp > self.ttl
 
     def cleanup(self):
-        """Удаляет записи с истёкшим TTL."""
+        """Удаление просроченных записей."""
 
         original_count = len(self.entries)
 
@@ -114,9 +103,7 @@ class DeadCache:
 
 
 class TemporaryConfig:
-    """
-    Безопасное создание временного JSON-файла.
-    """
+    """Создание временного JSON-конфига."""
 
     def __init__(self, config: dict):
         self.config = config
@@ -131,13 +118,18 @@ class TemporaryConfig:
         self.path = Path(filename)
 
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as file:
+            with os.fdopen(
+                fd,
+                "w",
+                encoding="utf-8"
+            ) as file:
                 json.dump(
                     self.config,
                     file,
                     ensure_ascii=False,
                     indent=2
                 )
+
         except Exception:
             self.path.unlink(missing_ok=True)
             self.path = None
@@ -151,12 +143,7 @@ class TemporaryConfig:
 
 
 class XrayProcess:
-    """
-    Управление жизненным циклом локального Xray subprocess.
-
-    Этот класс не формирует конфигурации подключения
-    и не сканирует внешние узлы.
-    """
+    """Управление жизненным циклом Xray subprocess."""
 
     def __init__(
         self,
@@ -165,7 +152,9 @@ class XrayProcess:
     ):
         self.binary_path = Path(binary_path)
         self.config_path = Path(config_path)
-        self.process: Optional[asyncio.subprocess.Process] = None
+        self.process: Optional[
+            asyncio.subprocess.Process
+        ] = None
 
     async def start(self):
         if not self.binary_path.is_file():
@@ -204,6 +193,7 @@ class XrayProcess:
                     self.process.wait(),
                     timeout=5
                 )
+
             except asyncio.TimeoutError:
                 self.process.kill()
                 await self.process.wait()
@@ -221,9 +211,7 @@ class XrayProcess:
 
 
 class Checker:
-    """
-    Общий менеджер состояния проверки.
-    """
+    """Менеджер кеша и TLS-проверки."""
 
     def __init__(self):
         self.cache = DeadCache()
@@ -251,11 +239,91 @@ class Checker:
         self.cache.remove(address)
         self.cache.save()
 
+    async def check(self, address: str, host: str) -> bool:
+        """
+        Проверка TLS-handshake с заданным SNI.
+
+        Проверяет только TLS-доступность, а не работу VPN-прокси.
+        """
+
+        target = f"{address}#{host}"
+
+        if self.is_cached(address):
+            logger.warning("[DEAD] %s cached", target)
+            return False
+
+        writer = None
+        success = False
+        reason = "check_failed"
+
+        try:
+            ip, port_string = address.rsplit(":", 1)
+            port = int(port_string)
+
+            if not 1 <= port <= 65535:
+                raise ValueError("Invalid port")
+
+            ctx = ssl.create_default_context()
+
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    host=ip,
+                    port=port,
+                    ssl=ctx,
+                    server_hostname=host
+                ),
+                timeout=8
+            )
+
+            success = True
+
+        except Exception as error:
+            reason = f"check_failed: {type(error).__name__}"
+
+            logger.debug(
+                "TLS check error for %s: %s",
+                target,
+                error
+            )
+
+        finally:
+            if writer is not None:
+                writer.close()
+
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+        if success:
+            self.clear_dead(address)
+
+            logger.info("[ALIVE] %s", target)
+            return True
+
+        self.mark_dead(
+            address,
+            reason=reason
+        )
+
+        logger.warning(
+            "[DEAD] %s %s",
+            target,
+            reason
+        )
+
+        return False
+
 
 async def main():
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(message)s"
+        format=(
+            "%(asctime)s | "
+            "%(levelname)s | "
+            "%(name)s | "
+            "%(message)s"
+        )
     )
 
     checker = Checker()
