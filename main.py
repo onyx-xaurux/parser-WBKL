@@ -19,20 +19,17 @@ from checker import Checker
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(message)s')
 logger = logging.getLogger("scanner")
 
-# --- ЗАГРУЗКА ИЗ ФАЙЛОВ ---
 def load_local_text():
     if LOCAL_SOURCES.exists():
         return LOCAL_SOURCES.read_text(encoding="utf-8")
     return ""
 
-# --- ЗАГРУЗКА С ФОРУМОВ (HTML) ---
 async def fetch_url(session, url):
     try:
         async with session.get(url, timeout=15) as response:
             if response.status == 200:
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
-                # Вытаскиваем весь текст со страницы
                 return soup.get_text(separator='\n', strip=True)
     except Exception as e:
         logger.error(f"Failed to fetch {url}: {e}")
@@ -41,11 +38,9 @@ async def fetch_url(session, url):
 async def load_web_sources():
     if not WEB_SOURCES.exists():
         return ""
-    
     urls = [line.strip() for line in WEB_SOURCES.read_text().splitlines() if line.strip() and not line.startswith('#')]
     if not urls:
         return ""
-
     logger.info(f"Fetching {len(urls)} web sources...")
     text = ""
     async with aiohttp.ClientSession() as session:
@@ -54,11 +49,9 @@ async def load_web_sources():
         text = "\n".join(results)
     return text
 
-# --- ЗАГРУЗКА ИЗ TELEGRAM ---
 async def load_telegram_sources():
     if not TG_SOURCES.exists():
         return ""
-
     api_id = os.getenv("TG_API_ID")
     api_hash = os.getenv("TG_API_HASH")
     session_str = os.getenv("TG_SESSION_STRING")
@@ -86,7 +79,6 @@ async def load_telegram_sources():
         for target in targets:
             try:
                 logger.info(f"Reading TG: {target}")
-                # Берем последние 100 сообщений из канала или от бота
                 messages = await client.get_messages(target, limit=100)
                 for msg in messages:
                     if msg.text:
@@ -97,12 +89,9 @@ async def load_telegram_sources():
         await client.disconnect()
     except Exception as e:
         logger.error(f"Telegram client error: {e}")
-
     return text
 
-# --- ОСНОВНАЯ ЛОГИКА ---
 async def main():
-    # 1. Загружаем белые списки
     if not WHITELIST_IPS.exists() or not WHITELIST_SNI.exists():
         logger.error("Whitelists not found! Run fetch_whitelist.py first.")
         sys.exit(1)
@@ -111,9 +100,7 @@ async def main():
     allowed_snis = set(WHITELIST_SNI.read_text(encoding="utf-8").splitlines())
     logger.info(f"Loaded {len(allowed_ips)} allowed IPs and {len(allowed_snis)} SNIs")
 
-    # 2. Собираем текст из всех источников
     all_text = []
-    
     logger.info("Loading local sources...")
     all_text.append(load_local_text())
     
@@ -126,7 +113,6 @@ async def main():
     full_text = "\n".join(all_text)
     logger.info(f"Total collected text size: {len(full_text)} characters")
 
-    # 3. Парсим конфиги (VLESS, VMess, Trojan, JSON)
     configs = parse_text(full_text)
     logger.info(f"Parsed {len(configs)} configs from all sources")
 
@@ -134,7 +120,6 @@ async def main():
         logger.warning("No valid configs found.")
         return
 
-    # 4. Фильтруем по белому списку
     valid_configs = []
     for cfg in configs:
         if cfg.ip in allowed_ips and cfg.sni in allowed_snis:
@@ -146,7 +131,6 @@ async def main():
         logger.warning("No configs matched the whitelist.")
         return
 
-    # 5. Проверяем через TLS
     checker = Checker()
     sem = asyncio.Semaphore(50)
     
@@ -164,7 +148,6 @@ async def main():
 
     alive = [r for r in results if r]
     
-    # 6. Сохраняем результаты
     WORKING_PROXIES.write_text("\n".join(alive), encoding="utf-8")
     checker.save_cache()
     
