@@ -9,6 +9,11 @@ DEAD_CACHE = Path("dead_cache.json")
 WHITELIST_IPS = Path("whitelist_ips.txt")
 WHITELIST_SNI = Path("whitelist_sni.txt")
 
+# Источники
+LOCAL_SOURCES = Path("sources.txt")
+WEB_SOURCES = Path("web_sources.txt")
+TG_SOURCES = Path("tg_sources.txt")
+
 # Настройки проверки
 CHECK_TIMEOUT = 5  # секунд на проверку одного сервера
 MAX_CONCURRENT_CHECKS = 50  # одновременных проверок
