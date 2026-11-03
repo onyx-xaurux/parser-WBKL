@@ -79,26 +79,34 @@ def extract_configs(text):
         pass
     return list(dict.fromkeys(cleaned))
 
+
 def load_whitelist():
-    """Формат строк: IP|SNI. Комментарии начинаются с #."""
+    """Формат строк: IP|SNI."""
     pairs = set()
+
     for line in read_lines(WHITELIST_FILE):
-        line = line.strip().strip("-").strip()
-        if "|" in line:
-            ip, sni = line.split("|", 1)
-        elif re.search(r"\bip\s*:", line, re.I):
-            # YAML-подобные строки поддерживаются парсером ниже как отдельные ключи.
+        line = line.strip()
+
+        if "|" not in line:
             continue
-        else:
-            continue
+
+        ip_text, sni_text = line.split("|", 1)
+
+        ip_text = ip_text.strip().strip('"').strip("'")
+        sni = sni_text.strip().strip('"').strip("'").lower().rstrip(".")
+
         try:
-            ip = str(ipaddress.ip_address(ip.strip().strip('"\\'')))
-            sni = sni.strip().strip('"\\'').lower().rstrip(".")
+            ip = str(ipaddress.ip_address(ip_text))
+
             if sni:
                 pairs.add((ip, sni))
+
         except ValueError:
             log.warning("Некорректная строка whitelist: %s", line)
+
+    log.info("Загружено пар IP/SNI: %d", len(pairs))
     return pairs
+
 
 def get_server_sni(uri):
     try:
