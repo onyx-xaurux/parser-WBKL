@@ -34,24 +34,76 @@ def decode_vmess(uri):
     raw = uri[8:].split("#", 1)[0]
     return json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
 
+def make_transport(network, path="", host="", service_name=""):
+    network = (network or "tcp").strip().lower()
+    path = path or ""
+    host = host or ""
+    service_name = service_name or ""
+
+    if network in ("", "tcp", "raw"):
+        return None
+    if network == "ws":
+        transport = {"type": "ws"}
+        if path:
+            transport["path"] = path
+        if host:
+            transport["headers"] = {"Host": host}
+        return transport
+    if network == "grpc":
+        return {"type": "grpc", "service_name": service_name}
+    if network in ("http", "h2"):
+        transport = {"type": "http"}
+        if path:
+            transport["path"] = path
+        if host:
+            transport["host"] = [item.strip() for item in host.split(",") if item.strip()]
+        return transport
+    if network == "httpupgrade":
+        transport = {"type": "httpupgrade"}
+        if path:
+            transport["path"] = path
+        if host:
+            transport["host"] = host
+        return transport
+    if network == "quic":
+        return {"type": "quic"}
+    if network == "xhttp":
+        raise ValueError(
+            "Транспорт XHTTP не поддерживается стандартной сборкой sing-box 1.11.15"
+        )
+    raise ValueError(f"Неподдерживаемый транспорт: {network}")
+
+
+def safe_target(uri):
+    try:
+        parsed = urlsplit(uri)
+        return f"{parsed.scheme}://{parsed.hostname or '?'}:{parsed.port or '?'}"
+    except Exception:
+        return "не удалось определить адрес узла"
+
+
 def make_outbound(uri):
     if uri.startswith("vless://"):
         p = urlsplit(uri)
-        q = parse_qs(p.query)
-        tls_on = q.get("security", [""])[0] in ("tls", "reality")
+        q = parse_qs(p.query, keep_blank_values=True)
+        security = q.get("security", [""])[0].lower()
+        tls_on = security in ("tls", "reality")
         tls = {"enabled": tls_on}
         sni = q.get("sni", [""])[0]
         if sni:
             tls["server_name"] = sni
         fp = q.get("fp", [""])[0]
-        if fp:
+        if fp and tls_on:
             tls["utls"] = {"enabled": True, "fingerprint": fp}
-        if q.get("security", [""])[0] == "reality":
+        if security == "reality":
             tls["reality"] = {
                 "enabled": True,
                 "public_key": q.get("pbk", [""])[0],
                 "short_id": q.get("sid", [""])[0],
             }
+        alpn = q.get("alpn", [""])[0]
+        if alpn and tls_on:
+            tls["alpn"] = [item for item in alpn.split(",") if item]
         out = {
             "type": "vless", "tag": "node", "server": p.hostname,
             "server_port": p.port, "uuid": unquote(p.username or ""),
@@ -59,7 +111,23 @@ def make_outbound(uri):
         }
         flow = q.get("flow", [""])[0]
         if flow:
+            if flow != "xtls-rprx-vision":
+                raise ValueError(f"Неподдерживаемый VLESS flow: {flow}")
             out["flow"] = flow
+
+        service_name = (
+            q.get("serviceName", [""])[0]
+            or q.get("service_name", [""])[0]
+            or q.get("path", [""])[0]
+        )
+        transport = make_transport(
+            q.get("type", ["tcp"])[0],
+            path=q.get("path", [""])[0],
+            host=q.get("host", [""])[0],
+            service_name=service_name,
+        )
+        if transport:
+            out["transport"] = transport
         return out
     if uri.startswith("vmess://"):
         d = decode_vmess(uri)
@@ -73,24 +141,42 @@ def make_outbound(uri):
         if tls_on:
             out["tls"] = {"enabled": True, "server_name": d.get("sni") or d.get("host") or d["add"]}
         net = d.get("net", "tcp")
-        if net == "ws":
-            out["transport"] = {"type": "ws", "path": d.get("path") or "/"}
-            if d.get("host"):
-                out["transport"]["headers"] = {"Host": d["host"]}
-        elif net == "grpc":
-            out["transport"] = {"type": "grpc", "service_name": d.get("path", "")}
+        transport = make_transport(
+            net,
+            path=d.get("path") or "",
+            host=d.get("host") or "",
+            service_name=d.get("serviceName") or d.get("path") or "",
+        )
+        if transport:
+            out["transport"] = transport
         return out
     if uri.startswith("trojan://"):
         p = urlsplit(uri)
-        q = parse_qs(p.query)
+        q = parse_qs(p.query, keep_blank_values=True)
         tls = {"enabled": True}
         if q.get("sni", [""])[0]:
             tls["server_name"] = q["sni"][0]
+        alpn = q.get("alpn", [""])[0]
+        if alpn:
+            tls["alpn"] = [item for item in alpn.split(",") if item]
         out = {
             "type": "trojan", "tag": "node", "server": p.hostname,
             "server_port": p.port, "password": unquote(p.username or ""),
             "tls": tls,
         }
+        service_name = (
+            q.get("serviceName", [""])[0]
+            or q.get("service_name", [""])[0]
+            or q.get("path", [""])[0]
+        )
+        transport = make_transport(
+            q.get("type", ["tcp"])[0],
+            path=q.get("path", [""])[0],
+            host=q.get("host", [""])[0],
+            service_name=service_name,
+        )
+        if transport:
+            out["transport"] = transport
         return out
     if uri.startswith("ss://"):
         raw = uri[5:].split("#", 1)[0].split("?", 1)[0]
@@ -158,7 +244,7 @@ async def http_get_via_proxy(port, url):
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         async with session.get(url, allow_redirects=True) as response:
             await response.read()
-            return 200 <= response.status < 400
+            return response.status
 
 async def check_one(uri, cache, lock):
     now = int(time.time())
@@ -168,13 +254,15 @@ async def check_one(uri, cache, lock):
     has_real_http_result = isinstance(old_checks, dict) and bool(old_checks)
     # Старые записи с checks={} означают ошибку до HTTP GET, а не мёртвый прокси.
     if has_real_http_result and now - int(old.get("last_checked", 0)) < interval:
-        log.info("Пропуск по dead cache (HTTP GET уже проверялся): %s", uri[:70])
+        log.info("Пропуск по dead cache (HTTP GET уже проверялся): %s", safe_target(uri))
         return False
 
-    port = await free_port()
-    config = build_singbox_config(uri, port)
     process = None
+    config_path = None
+    target = safe_target(uri)
     try:
+        port = await free_port()
+        config = build_singbox_config(uri, port)
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False)
             config_path = f.name
@@ -187,16 +275,28 @@ async def check_one(uri, cache, lock):
         checks = {}
         for name, url in CHECK_URLS.items():
             try:
-                checks[name] = await http_get_via_proxy(port, url)
-            except Exception:
+                status = await http_get_via_proxy(port, url)
+                checks[name] = 200 <= status < 400
+                if checks[name]:
+                    log.info("HTTP %s: успешно, статус %d (%s)", name, status, target)
+                else:
+                    log.warning("HTTP %s: получен статус %d (%s)", name, status, target)
+            except Exception as exc:
                 checks[name] = False
+                log.warning(
+                    "HTTP %s: %s: %s (%s)",
+                    name,
+                    type(exc).__name__,
+                    str(exc)[:240] or "без дополнительного описания",
+                    target,
+                )
         success = any(checks.values())
         if success:
-            log.info("Рабочий конфиг: %s", uri[:90])
+            log.info("Рабочий конфиг: %s", target)
             async with lock:
                 cache.pop(uri, None)
             return True
-        log.info("Не прошёл HTTP GET: %s", uri[:90])
+        log.info("Не прошёл ни один HTTP GET: %s", target)
         async with lock:
             cache[uri] = {
                 "last_checked": now,
@@ -207,7 +307,7 @@ async def check_one(uri, cache, lock):
     except Exception as exc:
         # Ошибка запуска sing-box не доказывает, что удалённый прокси нерабочий.
         # Не добавляем такую запись в dead cache: следующий запуск попробует снова.
-        log.error("Проверка не дошла до HTTP GET для %s: %s", uri[:70], exc)
+        log.error("Проверка не дошла до HTTP GET для %s: %s", target, exc)
         return False
     finally:
         if process and process.returncode is None:
@@ -217,7 +317,7 @@ async def check_one(uri, cache, lock):
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
-        if "config_path" in locals():
+        if config_path:
             try:
                 os.unlink(config_path)
             except OSError:
