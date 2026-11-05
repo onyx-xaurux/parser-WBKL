@@ -1,56 +1,83 @@
 {
   "vless://c2e45f74-7c67-44e3-a528-357f92503de6@51.250.42.70:443?encryption=none&flow=xtls-rprx-vision&fp=chrome&pbk=WrPShaEtQUXeKeyWDuELzBsd_ygDsU-k2bL1Avi13xI&security=reality&sni=yandex.ru&type=raw#17%20%F0%9F%87%A9%F0%9F%87%AA%20OBConfigs": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883324,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   },
   "vless://1313230e-1d57-4214-9aa0-73447addf259@31.129.42.37:443?type=xhttp&security=tls&fp=edge&sni=api.datapull.cc&path=/api/v2/&mode=packet-up&extra={": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883324,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   },
   "vless://1313230e-1d57-4214-9aa0-73447addf259@37.9.4.128:443?type=xhttp&security=tls&fp=edge&sni=api1.madapp.cc&path=/api/v2/&mode=packet-up&extra={": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883324,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   },
   "vless://6d5368cb-bd20-4b65-9c0b-2ad8937f11d7@asffff.falsemirrov.com:443?type=grpc&security=reality&fp=firefox&pbk=Z0Pvb9937hVW9Ch_um5DG00t6n9lXLfpcFRUT64cJRc&sid=27e53bbcab7593d7&sni=max.ru#40%20%F0%9F%8C%90%20OBConfigs": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883325,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   },
   "vless://f21079b8-b9b0-4b20-917d-c930d71351bb@37.9.4.128:443?alpn=h2%2Chttp%2F1.1&encryption=none&extra=%7B%22host%22%3A%22%22%2C%22path%22%3A%22%22%2C%22mode%22%3A%22%22%2C%22headers%22%3Anull%2C%22xPaddingBytes%22%3A%22100-1000%22%2C%22xPaddingObfsMode%22%3Afalse%2C%22xPaddingKey%22%3A%22%22%2C%22xPaddingHeader%22%3A%22%22%2C%22xPaddingPlacement%22%3A%22%22%2C%22xPaddingMethod%22%3A%22%22%2C%22uplinkHTTPMethod%22%3A%22%22%2C%22sessionIDPlacement%22%3A%22%22%2C%22sessionIDKey%22%3A%22%22%2C%22sessionIDTable%22%3A%22%22%2C%22sessionIDLength%22%3A%220%22%2C%22seqPlacement%22%3A%22%22%2C%22seqKey%22%3A%22%22%2C%22uplinkDataPlacement%22%3A%22%22%2C%22uplinkDataKey%22%3A%22%22%2C%22uplinkChunkSize%22%3A%220%22%2C%22noGRPCHeader%22%3Afalse%2C%22noSSEHeader%22%3Afalse%2C%22scMaxEachPostBytes%22%3A%220%22%2C%22scMinPostsIntervalMs%22%3A%220%22%2C%22scMaxBufferedPosts%22%3A0%2C%22scStreamUpServerSecs%22%3A%220%22%2C%22serverMaxHeaderBytes%22%3A0%2C%22xmux%22%3A%7B%22maxConcurrency%22%3A%228-16%22%2C%22maxConnections%22%3A%220%22%2C%22cMaxReuseTimes%22%3A%220%22%2C%22hMaxRequestTimes%22%3A%22600-900%22%2C%22hMaxReusableSecs%22%3A%221800-3000%22%2C%22hKeepAlivePeriod%22%3A0%7D%2C%22downloadSettings%22%3Anull%2C%22extra%22%3Anull%7D&fp=ios&host=api1.madapp.cc&mode=packet-up&path=%2Fapi%2Fv2%2F&security=tls&sni=api1.madapp.cc&type=xhttp#15%20%F0%9F%87%A9%F0%9F%87%AA%20OBConfigs": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883340,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   },
   "vless://98e06192-994e-4fa5-87ce-f7d00c3bf81f@31.129.42.37:443?encryption=none&type=xhttp&security=tls&host=api.datapull.cc&path=%2Fapi%2Fv2%2F&mode=packet-up&extra=null&fp=edge&sni=api.datapull.cc&alpn=h2%2Chttp%2F1.1#46%20%F0%9F%87%AB%F0%9F%87%B7%20OBConfigs": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883370,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   },
   "vless://98e06192-994e-4fa5-87ce-f7d00c3bf81f@37.9.4.128:443?encryption=none&type=xhttp&security=tls&host=api1.madapp.cc&path=%2Fapi%2Fv2%2F&mode=packet-up&extra=%7B%22host%22%3A%22%22%2C%22path%22%3A%22%22%2C%22mode%22%3A%22packet-up%22%2C%22headers%22%3Anull%2C%22xPaddingBytes%22%3A%22100-1000%22%2C%22xPaddingObfsMode%22%3Afalse%2C%22xPaddingKey%22%3A%22%22%2C%22xPaddingHeader%22%3A%22%22%2C%22xPaddingPlacement%22%3A%22%22%2C%22xPaddingMethod%22%3A%22%22%2C%22uplinkHTTPMethod%22%3A%22%22%2C%22sessionPlacement%22%3A%22%22%2C%22sessionKey%22%3A%22%22%2C%22seqPlacement%22%3A%22%22%2C%22seqKey%22%3A%22%22%2C%22uplinkDataPlacement%22%3A%22%22%2C%22uplinkDataKey%22%3A%22%22%2C%22uplinkChunkSize%22%3A0%2C%22noGRPCHeader%22%3Afalse%2C%22noSSEHeader%22%3Afalse%2C%22scMaxEachPostBytes%22%3A%220%22%2C%22scMinPostsIntervalMs%22%3A%220%22%2C%22scMaxBufferedPosts%22%3A0%2C%22scStreamUpServerSecs%22%3A%220%22%2C%22xmux%22%3A%7B%22maxConcurrency%22%3A%228-16%22%2C%22maxConnections%22%3A%220%22%2C%22cMaxReuseTimes%22%3A%2296-192%22%2C%22hMaxRequestTimes%22%3A%22400-600%22%2C%22hMaxReusableSecs%22%3A%221800-3000%22%2C%22hKeepAlivePeriod%22%3A0%7D%2C%22downloadSettings%22%3Anull%2C%22extra%22%3Anull%7D&fp=ios&sni=api1.madapp.cc&alpn=h2%2Chttp%2F1.1#52%20%F0%9F%87%A9%F0%9F%87%AA%20OBConfigs": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883370,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   },
   "vless://a4067a06-1549-4a15-ad1f-f52f41651171@45.10.246.35:443?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&fp=chrome&sni=rus.astvpn.com&pbk=4E6T4guicbxmf2D5dWsRUF2TsoBBvJdMeDBloZQrInY#09%20%F0%9F%87%A8%F0%9F%87%A6%20OBConfigs": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883386,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   },
   "vless://be6c2b68-c0bb-47b6-8f3e-450133b3a71e@5.178.85.132:443?security=reality&encryption=none&pbk=P5KfTl_fQ0lZutcRdLhEzhwWhPNJtrVYf2reWB5LgD8&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=yandex.ru#%D0%9E%D0%91%D0%A5%D0%9E%D0%94%20%D0%93%D0%9B%D0%A3%D0%A8%D0%98%D0%9B%D0%9E%D0%9A%20%E2%84%9621%20%F0%9F%87%B7%F0%9F%87%BA": {
-    "last_checked": 1793878242,
-    "checks": {},
-    "error": "sing-box завершился до запуска локального SOCKS",
+    "last_checked": 1793883387,
+    "checks": {
+      "cloudflare": false,
+      "apple": false,
+      "telegram": false
+    },
     "first_failed": 1793878242
   }
 }
