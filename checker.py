@@ -123,7 +123,7 @@ def make_outbound(uri):
         transport = make_transport(
             q.get("type", ["tcp"])[0],
             path=q.get("path", [""])[0],
-            host=q.get("host", [""])[0],
+            host=q.get("host", [""])[0] or q.get("sni", [""])[0],
             service_name=service_name,
         )
         if transport:
@@ -172,7 +172,7 @@ def make_outbound(uri):
         transport = make_transport(
             q.get("type", ["tcp"])[0],
             path=q.get("path", [""])[0],
-            host=q.get("host", [""])[0],
+            host=q.get("host", [""])[0] or q.get("sni", [""])[0],
             service_name=service_name,
         )
         if transport:
