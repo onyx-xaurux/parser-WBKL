@@ -307,34 +307,30 @@ def load_whitelist():
 # --------------------------------------------------
 
 async def resolve_server(server):
+    """Возвращает все IP-адреса, в которые разрешается сервер."""
     try:
-        ipaddress.ip_address(server)
-        return server
+        return {str(ipaddress.ip_address(server))}
     except ValueError:
         pass
 
     try:
         loop = asyncio.get_running_loop()
-
         results = await loop.getaddrinfo(
             server,
             None,
             family=0,
             type=0,
         )
-
+        addresses = set()
         for result in results:
-            ip = result[4][0]
-
             try:
-                return str(ipaddress.ip_address(ip))
-            except ValueError:
+                addresses.add(str(ipaddress.ip_address(result[4][0])))
+            except (ValueError, IndexError):
                 continue
-
+        return addresses
     except Exception as error:
         log.debug("DNS ошибка для %s: %s", server, error)
-
-    return None
+        return set()
 
 
 # --------------------------------------------------
@@ -343,17 +339,15 @@ async def resolve_server(server):
 
 async def apply_whitelist(configs, allowed_pairs):
     if not allowed_pairs:
-        log.error(
-            "Whitelist пуст. Конфигурации не допускаются к проверке."
-        )
+        log.error("Whitelist пуст или не распознан: проверка остановлена.")
         return []
 
     result = []
     checked_dns = {}
 
     for config in configs:
-        server = config.get("server")
-        sni = str(config.get("sni") or server or "").lower().rstrip(".")
+        server = str(config.get("server") or "").strip()
+        sni = str(config.get("sni") or server).strip().lower().rstrip(".")
 
         if not server or not sni:
             continue
@@ -361,13 +355,18 @@ async def apply_whitelist(configs, allowed_pairs):
         if server not in checked_dns:
             checked_dns[server] = await resolve_server(server)
 
-        server_ip = checked_dns[server]
-
-        if not server_ip:
+        server_ips = checked_dns[server]
+        if not server_ips:
             continue
 
-        if (server_ip, sni) in allowed_pairs:
-            config["resolved_ip"] = server_ip
+        # В YAML одному имени соответствует несколько IP. Проверяем все DNS-ответы,
+        # а не только первый адрес, который вернул resolver.
+        matched_ip = next(
+            (ip for ip in server_ips if (ip, sni) in allowed_pairs),
+            None,
+        )
+        if matched_ip:
+            config["resolved_ip"] = matched_ip
             result.append(config)
 
     log.info(
@@ -375,7 +374,6 @@ async def apply_whitelist(configs, allowed_pairs):
         len(result),
         len(configs),
     )
-
     return result
 
 
