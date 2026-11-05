@@ -132,7 +132,16 @@ async def wait_socks(port, process):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if process.returncode is not None:
-            raise RuntimeError("sing-box завершился до запуска локального SOCKS")
+            output = ""
+            if process.stdout:
+                try:
+                    output = (await process.stdout.read()).decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+            raise RuntimeError(
+                f"sing-box завершился до запуска локального SOCKS "
+                f"(код {process.returncode}): {output[-2500:] or 'нет вывода'}"
+            )
         try:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
             writer.close()
@@ -141,6 +150,7 @@ async def wait_socks(port, process):
         except OSError:
             await asyncio.sleep(0.2)
     raise TimeoutError("Локальный SOCKS sing-box не запустился")
+
 
 async def http_get_via_proxy(port, url):
     connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{port}")
@@ -154,8 +164,11 @@ async def check_one(uri, cache, lock):
     now = int(time.time())
     old = cache.get(uri)
     interval = RECHECK_AFTER_HOURS * 3600
-    if old and now - int(old.get("last_checked", 0)) < interval:
-        log.info("Пропуск по dead cache (повтор через 2 часа): %s", uri[:70])
+    old_checks = old.get("checks") if isinstance(old, dict) else None
+    has_real_http_result = isinstance(old_checks, dict) and bool(old_checks)
+    # Старые записи с checks={} означают ошибку до HTTP GET, а не мёртвый прокси.
+    if has_real_http_result and now - int(old.get("last_checked", 0)) < interval:
+        log.info("Пропуск по dead cache (HTTP GET уже проверялся): %s", uri[:70])
         return False
 
     port = await free_port()
@@ -167,8 +180,8 @@ async def check_one(uri, cache, lock):
             config_path = f.name
         process = await asyncio.create_subprocess_exec(
             SING_BOX_PATH, "run", "-c", config_path,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
         await wait_socks(port, process)
         checks = {}
@@ -192,14 +205,9 @@ async def check_one(uri, cache, lock):
             }
         return False
     except Exception as exc:
-        log.warning("Ошибка проверки %s: %s", uri[:70], exc)
-        async with lock:
-            cache[uri] = {
-                "last_checked": now,
-                "checks": {},
-                "error": str(exc)[:300],
-                "first_failed": old.get("first_failed", now) if old else now,
-            }
+        # Ошибка запуска sing-box не доказывает, что удалённый прокси нерабочий.
+        # Не добавляем такую запись в dead cache: следующий запуск попробует снова.
+        log.error("Проверка не дошла до HTTP GET для %s: %s", uri[:70], exc)
         return False
     finally:
         if process and process.returncode is None:
