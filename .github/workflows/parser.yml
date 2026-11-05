@@ -42,7 +42,7 @@ jobs:
 
       - name: Install sing-box
         run: |
-          go install github.com/sagernet/sing-box/cmd/sing-box@v1.11.15
+          go install -tags with_utls github.com/sagernet/sing-box/cmd/sing-box@v1.11.15
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
       - name: Verify sing-box
