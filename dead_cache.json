@@ -1,6 +1,6 @@
 {
   "vless://c2e45f74-7c67-44e3-a528-357f92503de6@51.250.42.70:443?encryption=none&flow=xtls-rprx-vision&fp=chrome&pbk=WrPShaEtQUXeKeyWDuELzBsd_ygDsU-k2bL1Avi13xI&security=reality&sni=yandex.ru&type=raw#17%20%F0%9F%87%A9%F0%9F%87%AA%20OBConfigs": {
-    "last_checked": 1793898470,
+    "last_checked": 1793911828,
     "checks": {
       "cloudflare": false,
       "apple": false,
@@ -41,7 +41,7 @@
     "first_failed": 1793878242
   },
   "vless://6d5368cb-bd20-4b65-9c0b-2ad8937f11d7@asffff.falsemirrov.com:443?type=grpc&security=reality&fp=firefox&pbk=Z0Pvb9937hVW9Ch_um5DG00t6n9lXLfpcFRUT64cJRc&sid=27e53bbcab7593d7&sni=max.ru#40%20%F0%9F%8C%90%20OBConfigs": {
-    "last_checked": 1793898470,
+    "last_checked": 1793911828,
     "checks": {
       "cloudflare": false,
       "apple": false,
@@ -91,7 +91,7 @@
     "first_failed": 1793878242
   },
   "vless://a4067a06-1549-4a15-ad1f-f52f41651171@45.10.246.35:443?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&fp=chrome&sni=rus.astvpn.com&pbk=4E6T4guicbxmf2D5dWsRUF2TsoBBvJdMeDBloZQrInY#09%20%F0%9F%87%A8%F0%9F%87%A6%20OBConfigs": {
-    "last_checked": 1793898470,
+    "last_checked": 1793911828,
     "checks": {
       "cloudflare": false,
       "apple": false,
@@ -114,7 +114,7 @@
     "first_failed": 1793878242
   },
   "vless://be6c2b68-c0bb-47b6-8f3e-450133b3a71e@5.178.85.132:443?security=reality&encryption=none&pbk=P5KfTl_fQ0lZutcRdLhEzhwWhPNJtrVYf2reWB5LgD8&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=yandex.ru#%D0%9E%D0%91%D0%A5%D0%9E%D0%94%20%D0%93%D0%9B%D0%A3%D0%A8%D0%98%D0%9B%D0%9E%D0%9A%20%E2%84%9621%20%F0%9F%87%B7%F0%9F%87%BA": {
-    "last_checked": 1793898471,
+    "last_checked": 1793911829,
     "checks": {
       "cloudflare": false,
       "apple": false,
@@ -130,8 +130,8 @@
         "message": "General SOCKS server failure"
       },
       "telegram": {
-        "error": "TimeoutError",
-        "message": "без дополнительного описания"
+        "error": "ProxyError",
+        "message": "General SOCKS server failure"
       }
     },
     "first_failed": 1793878242
