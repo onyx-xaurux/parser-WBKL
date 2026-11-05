@@ -251,9 +251,15 @@ async def check_one(uri, cache, lock):
     old = cache.get(uri)
     interval = RECHECK_AFTER_HOURS * 3600
     old_checks = old.get("checks") if isinstance(old, dict) else None
-    has_real_http_result = isinstance(old_checks, dict) and bool(old_checks)
-    # Старые записи с checks={} означают ошибку до HTTP GET, а не мёртвый прокси.
-    if has_real_http_result and now - int(old.get("last_checked", 0)) < interval:
+    old_details = old.get("details") if isinstance(old, dict) else None
+    has_diagnostic_result = (
+        isinstance(old_checks, dict)
+        and bool(old_checks)
+        and isinstance(old_details, dict)
+        and bool(old_details)
+    )
+    # Старые записи без details перепроверяются: раньше причина HTTP-сбоя не сохранялась.
+    if has_diagnostic_result and now - int(old.get("last_checked", 0)) < interval:
         log.info("Пропуск по dead cache (HTTP GET уже проверялся): %s", safe_target(uri))
         return False
 
@@ -273,16 +279,22 @@ async def check_one(uri, cache, lock):
         )
         await wait_socks(port, process)
         checks = {}
+        details = {}
         for name, url in CHECK_URLS.items():
             try:
                 status = await http_get_via_proxy(port, url)
                 checks[name] = 200 <= status < 400
+                details[name] = {"status": status}
                 if checks[name]:
                     log.info("HTTP %s: успешно, статус %d (%s)", name, status, target)
                 else:
                     log.warning("HTTP %s: получен статус %d (%s)", name, status, target)
             except Exception as exc:
                 checks[name] = False
+                details[name] = {
+                    "error": type(exc).__name__,
+                    "message": str(exc)[:240] or "без дополнительного описания",
+                }
                 log.warning(
                     "HTTP %s: %s: %s (%s)",
                     name,
@@ -301,7 +313,8 @@ async def check_one(uri, cache, lock):
             cache[uri] = {
                 "last_checked": now,
                 "checks": checks,
-                "first_failed": old.get("first_failed", now) if old else now,
+                "details": details,
+                "first_failed": old.get("first_failed", now) if isinstance(old, dict) else now,
             }
         return False
     except Exception as exc:
