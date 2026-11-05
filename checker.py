@@ -216,7 +216,28 @@ async def check_one(uri, cache, lock):
                 pass
 
 async def check_all(configs):
+    # parser.py передаёт словари с метаданными; checker работает с исходными URI.
+    normalized = []
+    for item in configs:
+        if isinstance(item, dict):
+            raw = item.get("raw")
+            if isinstance(raw, str) and raw.strip():
+                normalized.append(raw.strip())
+            else:
+                log.warning("Пропущена конфигурация без исходной ссылки: %r", item)
+        elif isinstance(item, str) and item.strip():
+            normalized.append(item.strip())
+        else:
+            log.warning("Пропущен объект неизвестного формата: %r", item)
+
+    # Убираем дубликаты, сохраняя порядок.
+    normalized = list(dict.fromkeys(normalized))
+
     cache = load_json(DEAD_CACHE_FILE, {})
+    if not isinstance(cache, dict):
+        log.warning("Dead cache повреждён или имеет неверный формат; начинаем с пустого словаря")
+        cache = {}
+
     lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 
@@ -224,20 +245,43 @@ async def check_all(configs):
         async with semaphore:
             return await check_one(uri, cache, lock)
 
-    results = await asyncio.gather(*(limited(x) for x in configs), return_exceptions=True)
-    for uri, result in zip(configs, results):
-        if isinstance(result, Exception):
-            log.exception("Необработанная ошибка проверки %s: %s", uri[:70], result)
+    results = await asyncio.gather(
+        *(limited(uri) for uri in normalized),
+        return_exceptions=True,
+    )
 
-    # Рабочий файл — накопительный архив: старые записи не удаляются.
+    for uri, result in zip(normalized, results):
+        if isinstance(result, Exception):
+            log.error(
+                "Необработанная ошибка проверки %s: %s",
+                str(uri)[:70],
+                result,
+            )
+
+    # Рабочий файл — накопительный архив успешных конфигураций.
     existing = set()
     if WORKING_FILE.exists():
-        existing.update(x.strip() for x in WORKING_FILE.read_text(encoding="utf-8").splitlines() if x.strip())
-    for uri, result in zip(configs, results):
+        existing.update(
+            line.strip()
+            for line in WORKING_FILE.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+
+    for uri, result in zip(normalized, results):
         if result is True:
             existing.add(uri)
-    WORKING_FILE.write_text("\n".join(sorted(existing)) + ("\n" if existing else ""), encoding="utf-8")
 
-    # Dead cache хранится бессрочно; timestamp лишь определяет момент повторной проверки.
+    WORKING_FILE.write_text(
+        "\n".join(sorted(existing)) + ("\n" if existing else ""),
+        encoding="utf-8",
+    )
+
+    # Неуспешные записи сохраняются в dead_cache.json.
+    # last_checked используется только для интервала повторной проверки.
     save_json_atomic(DEAD_CACHE_FILE, cache)
-    return [uri for uri, result in zip(configs, results) if result is True]
+
+    return [
+        uri
+        for uri, result in zip(normalized, results)
+        if result is True
+    ]
