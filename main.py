@@ -11,40 +11,29 @@ logger = logging.getLogger("scanner")
 
 async def main():
     logger.info("=== ЗАПУСК СКАНИРОВАНИЯ ===")
-    
     configs = await collect_all()
     logger.info(f"К проверке готово конфигов: {len(configs)}")
     
     if not configs:
         return
 
-    for c in configs[:1]:
-        logger.info(f"DEBUG IP/SNI: {c.get('server')} / {c.get('sni')}")
-
     checker = Checker()
     sem = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
     
     async def check_pair(cfg):
         async with sem:
-            try:
-                ip = cfg.get('server')
-                sni = cfg.get('sni')
-                raw = cfg.get('raw')
-                proto = cfg.get('protocol', 'vless')
-                
-                if await checker.check(ip, sni, raw, proto):
-                    logger.info(f"[ALIVE] {raw[:60]}...")
-                    return raw
-                return None
-            except Exception as e:
-                logger.error(f"[CRITICAL] {e}")
-                traceback.print_exc()
-                return e # Возвращаем ошибку, чтобы gather её увидел
+            ip = cfg.get('server')
+            sni = cfg.get('sni')
+            raw = cfg.get('raw')
+            proto = cfg.get('protocol', 'vless')
+            
+            if await checker.check(ip, sni, raw, proto):
+                logger.info(f"[ALIVE] {raw[:60]}...")
+                return raw
+            return None
 
     logger.info("Начинаем проверку...")
     tasks = [check_pair(cfg) for cfg in configs]
-    
-    # ЛОВИМ ВСЕ ОШИБКИ
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     for res in results:
