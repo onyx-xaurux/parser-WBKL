@@ -138,7 +138,6 @@ class XrayRunner:
                 os.remove(config_path)
 
     async def test_hysteria(self, ip, port, sni, link, timeout):
-        # Hysteria2 проверяется через httpx с HTTP/2
         print(f"[INFO] Проверка Hysteria2 {ip}:{port}...")
         try:
             async with httpx.AsyncClient(proxy=f"hysteria2://{ip}:{port}", verify=False, timeout=timeout) as client:
@@ -146,9 +145,7 @@ class XrayRunner:
                 if response.status_code in (200, 301, 302):
                     return True
         except Exception as e:
-            # httpx без специальной поддержки hysteria часто падает, 
-            # поэтому мы просто возвращаем False и пишем в лог
-            print(f"[FAIL] {ip} | Hysteria2 не поддерживается напрямую: {e}")
+            print(f"[FAIL] {ip} | Hysteria2 не поддерживается: {e}")
             return False
         return False
 
@@ -161,6 +158,7 @@ class Checker:
         if self.cache.is_dead(ip, sni):
             return False
             
+        # ВОТ ЗДЕСЬ БЫЛА ОШИБКА (вызывался несуществующий метод)
         if protocol in ("hy2", "hysteria2"):
             is_alive = await self.runner.test_hysteria(ip, 443, sni, link, CHECK_TIMEOUT)
         else:
