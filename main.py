@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import traceback
 from parser import collect_all
 from checker import Checker
 from config import WORKING_FILE, MAX_CONCURRENT_CHECKS
@@ -17,23 +18,35 @@ async def main():
     if not configs:
         return
 
+    # Выводим ключи для отладки
     for c in configs[:3]:
-        logger.info(f"DEBUG: {c['protocol']} | {c['raw'][:80]}...")
+        logger.info(f"DEBUG: {c.get('protocol')} | {c.get('raw', '')[:60]}...")
+        logger.info(f"DEBUG KEYS: {list(c.keys())}")
+        logger.info(f"DEBUG IP/SNI: {c.get('server')} / {c.get('sni')}")
 
     checker = Checker()
     sem = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
     
     async def check_pair(cfg):
         async with sem:
-            ip = cfg['server']
-            sni = cfg['sni']
-            raw = cfg['raw']
-            proto = cfg.get('protocol', 'vless')
-            
-            if await checker.check(ip, sni, raw, proto):
-                logger.info(f"[ALIVE] {raw[:60]}...")
-                return raw
-            return None
+            try:
+                ip = cfg.get('server')
+                sni = cfg.get('sni')
+                raw = cfg.get('raw')
+                proto = cfg.get('protocol', 'vless')
+                
+                if not ip or not sni:
+                    logger.error(f"[SKIP] Пустой IP или SNI: {cfg}")
+                    return None
+                
+                if await checker.check(ip, sni, raw, proto):
+                    logger.info(f"[ALIVE] {raw[:60]}...")
+                    return raw
+                return None
+            except Exception as e:
+                logger.error(f"[CRITICAL] Ошибка при проверке {str(cfg.get('raw', ''))[:30]}: {e}")
+                traceback.print_exc()
+                return None
 
     logger.info("Начинаем проверку...")
     tasks = [check_pair(cfg) for cfg in configs]
