@@ -17,10 +17,8 @@ async def main():
     if not configs:
         return
 
-    # --- ОТЛАДКА: ПОКАЖЕМ ПЕРВЫЕ 3 ССЫЛКИ ---
     for c in configs[:3]:
         logger.info(f"DEBUG: {c['protocol']} | {c['raw'][:80]}...")
-    # ----------------------------------------
 
     checker = Checker()
     sem = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
@@ -46,6 +44,7 @@ async def main():
     checker.save()
     
     logger.info(f"=== ГОТОВО. РАБОЧИХ ПРОКСИ: {len(alive)} ===")
+    await asyncio.sleep(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
