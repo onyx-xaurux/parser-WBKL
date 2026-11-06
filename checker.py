@@ -7,6 +7,7 @@ import tempfile
 import subprocess
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, unquote
 import aiohttp
 from aiohttp_socks import ProxyConnector
 from config import DEAD_CACHE_FILE, CHECK_TIMEOUT, CACHE_TTL_HOURS
@@ -50,20 +51,79 @@ class XrayRunner:
             return s.getsockname()[1]
 
     def _build_config(self, link, ip, sni, local_port):
-        uuid = "00000000-0000-0000-0000-000000000000"
-        match = re.search(r'vless://([^@]+)@', link)
-        if match:
-            uuid = match.group(1)
+        # Разбираем ссылку вручную, чтобы вытащить все параметры
+        parsed = re.match(r'vless://([^@]+)@([^:]+):(\d+)\?([^#\s]+)', link)
+        if not parsed:
+            return None
+            
+        uuid = parsed.group(1)
+        query_str = parsed.group(4)
+        query = parse_qs(query_str)
 
-        return {
+        def get_q(key, default=""):
+            val = query.get(key, [default])[0]
+            return unquote(val) if val else default
+
+        network = get_q("type", "tcp")
+        security = get_q("security", "none")
+        
+        stream_settings = {
+            "network": network,
+            "security": security
+        }
+
+        if security == "tls":
+            stream_settings["tlsSettings"] = {
+                "serverName": sni,
+                "allowInsecure": True,
+                "fingerprint": get_q("fp", "chrome")
+            }
+        elif security == "reality":
+            stream_settings["realitySettings"] = {
+                "serverName": sni,
+                "fingerprint": get_q("fp", "chrome"),
+                "publicKey": get_q("pbk"),
+                "shortId": get_q("sid"),
+                "spiderX": get_q("spx", "/")
+            }
+
+        if network == "ws":
+            stream_settings["wsSettings"] = {
+                "path": get_q("path", "/"),
+                "headers": {"Host": get_q("host", sni)}
+            }
+        elif network == "grpc":
+            stream_settings["grpcSettings"] = {
+                "serviceName": get_q("serviceName", "")
+            }
+        elif network == "xhttp":
+            stream_settings["xhttpSettings"] = {
+                "path": get_q("path", "/"),
+                "host": get_q("host", sni),
+                "mode": get_q("mode", "auto")
+            }
+
+        # Формируем итоговый JSON для Xray
+        config = {
             "log": {"loglevel": "none"},
             "inbounds": [{"port": local_port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"udp": False}}],
             "outbounds": [{
                 "protocol": "vless",
-                "settings": {"vnext": [{"address": ip, "port": 443, "users": [{"id": uuid, "encryption": "none"}]}]},
-                "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": {"serverName": sni, "allowInsecure": True}}
+                "settings": {
+                    "vnext": [{
+                        "address": ip,
+                        "port": 443,
+                        "users": [{
+                            "id": uuid,
+                            "encryption": "none",
+                            "flow": get_q("flow") # Важно для xtls-rprx-vision
+                        }]
+                    }]
+                },
+                "streamSettings": stream_settings
             }]
         }
+        return config
 
     async def test_proxy(self, ip, sni, link, timeout):
         if not self.bin.exists():
@@ -73,6 +133,10 @@ class XrayRunner:
         local_port = self._get_free_port()
         config = self._build_config(link, ip, sni, local_port)
         
+        if not config:
+            print(f"[FAIL] {ip} | Не удалось разобрать ссылку (возможно, не vless)")
+            return False
+
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(config, f)
             config_path = f.name
@@ -81,9 +145,15 @@ class XrayRunner:
         try:
             process = await asyncio.create_subprocess_exec(
                 str(self.bin), "run", "-c", config_path,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
             await asyncio.sleep(1.5) # Ждем запуска Xray
+
+            # Проверяем, не упал ли Xray
+            if process.returncode is not None:
+                stderr = (await process.stderr.read()).decode()
+                print(f"[FAIL] {ip} | Xray упал. Ошибка: {stderr.strip()[:100]}")
+                return False
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
             async with aiohttp.ClientSession(connector=connector) as session:
