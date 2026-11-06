@@ -44,8 +44,9 @@ class DeadCache:
         self.data[f"{ip}#{sni}"] = time.time()
 
 class XrayRunner:
-    def __init__(self, bin_path=Path("./xray")):
-        self.bin = bin_path
+    def __init__(self):
+        # ИСПОЛЬЗУЕМ АБСОЛЮТНЫЙ ПУТЬ
+        self.bin = Path("xray").resolve()
 
     def _get_free_port(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
