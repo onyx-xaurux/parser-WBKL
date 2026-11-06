@@ -43,20 +43,6 @@ class DeadCache:
 class XrayRunner:
     def __init__(self, bin_path=Path("./xray")):
         self.bin = bin_path
-        self._lock = asyncio.Lock()
-
-    async def ensure_binary(self):
-        async with self._lock:
-            if self.bin.exists():
-                return True
-            try:
-                subprocess.run(["curl", "-sL", "-o", "xray.zip", "https://github.com/XTLS/Xray-core/releases/download/v1.8.7/Xray-linux-64.zip"], check=True)
-                subprocess.run(["unzip", "-o", "xray.zip", "-d", "."], check=True)
-                self.bin.chmod(0o755)
-                return True
-            except Exception as e:
-                print(f"Ошибка скачивания Xray: {e}")
-                return False
 
     def _get_free_port(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -80,7 +66,8 @@ class XrayRunner:
         }
 
     async def test_proxy(self, ip, sni, link, timeout):
-        if not await self.ensure_binary():
+        if not self.bin.exists():
+            print(f"[FAIL] Бинарник Xray не найден по пути {self.bin}")
             return False
 
         local_port = self._get_free_port()
@@ -104,11 +91,10 @@ class XrayRunner:
                     if response.status in (200, 301, 302):
                         return True
                     else:
-                        print(f"[FAIL] {ip} | Код ответа: {response.status}")
+                        print(f"[FAIL] {ip} | HTTP код: {response.status}")
                         return False
         except Exception as e:
-            # ВЫВОДИМ ОШИБКУ В ЛОГ, ЧТОБЫ ПОНЯТЬ ПРИЧИНУ
-            print(f"[ERROR] {ip} | Ошибка: {type(e).__name__} - {e}")
+            print(f"[ERROR] {ip} | {type(e).__name__}: {e}")
             return False
         finally:
             if process:
