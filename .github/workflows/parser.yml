@@ -1,8 +1,9 @@
- name: Proxy Scanner 2
+name: Proxy Scanner
+
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */2 * * *' # Каждые 2 часа
+    - cron: '0 */2 * * *'
 
 permissions:
   contents: write
