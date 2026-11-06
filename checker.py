@@ -11,36 +11,55 @@ import aiohttp
 from aiohttp_socks import ProxyConnector
 from config import DEAD_CACHE_FILE, CHECK_TIMEOUT, CACHE_TTL_HOURS
 
-class Checker:
-    def __init__(self):
-        self.cache_file = DEAD_CACHE_FILE
-        self.cache = self._load_cache()
-        self.ttl = CACHE_TTL_HOURS * 3600
-        self.xray_bin = Path("./xray")
-        self.lock = asyncio.Lock() # Защита от одновременной загрузки Xray
+class DeadCache:
+    """Отвечает только за кеширование мертвых серверов (Single Responsibility)"""
+    def __init__(self, path, ttl_hours):
+        self.path = path
+        self.ttl = ttl_hours * 3600
+        self.data = self._load()
 
-    def _load_cache(self):
-        if self.cache_file.exists():
+    def _load(self):
+        if self.path.exists():
             try:
-                return json.loads(self.cache_file.read_text())
-            except:
+                return json.loads(self.path.read_text())
+            except Exception:
                 return {}
         return {}
 
-    def save_cache(self):
-        self.cache_file.write_text(json.dumps(self.cache, indent=2))
+    def save(self):
+        self.path.write_text(json.dumps(self.data, indent=2))
 
     def is_dead(self, ip, sni):
         key = f"{ip}#{sni}"
-        if key in self.cache:
-            if time.time() - self.cache[key] < self.ttl:
+        if key in self.data:
+            if time.time() - self.data[key] < self.ttl:
                 return True
             else:
-                del self.cache[key]
+                del self.data[key]
         return False
 
     def mark_dead(self, ip, sni):
-        self.cache[f"{ip}#{sni}"] = time.time()
+        self.data[f"{ip}#{sni}"] = time.time()
+
+class XrayRunner:
+    """Отвечает только за запуск и остановку Xray (Single Responsibility)"""
+    def __init__(self, bin_path=Path("./xray")):
+        self.bin = bin_path
+        self._lock = asyncio.Lock()
+
+    async def ensure_binary(self):
+        async with self._lock:
+            if self.bin.exists():
+                return True
+            try:
+                # В идеале тут должен быть requests, но для KISS оставляем subprocess
+                subprocess.run(["curl", "-sL", "-o", "xray.zip", "https://github.com/XTLS/Xray-core/releases/download/v1.8.7/Xray-linux-64.zip"], check=True)
+                subprocess.run(["unzip", "-o", "xray.zip", "-d", "."], check=True)
+                self.bin.chmod(0o755)
+                return True
+            except Exception as e:
+                print(f"Ошибка скачивания Xray: {e}")
+                return False
 
     def _get_free_port(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -49,51 +68,23 @@ class Checker:
 
     def _build_config(self, link, ip, sni, local_port):
         uuid = "00000000-0000-0000-0000-000000000000"
-        if "vless://" in link:
-            match = re.search(r'vless://([^@]+)@', link)
-            if match:
-                uuid = match.group(1)
+        match = re.search(r'vless://([^@]+)@', link)
+        if match:
+            uuid = match.group(1)
 
-        config = {
+        return {
             "log": {"loglevel": "none"},
-            "inbounds": [{
-                "port": local_port,
-                "listen": "127.0.0.1",
-                "protocol": "socks",
-                "settings": {"udp": False}
-            }],
+            "inbounds": [{"port": local_port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"udp": False}}],
             "outbounds": [{
                 "protocol": "vless",
-                "settings": {
-                    "vnext": [{
-                        "address": ip,
-                        "port": 443,
-                        "users": [{"id": uuid, "encryption": "none"}]
-                    }]
-                },
-                "streamSettings": {
-                    "network": "tcp",
-                    "security": "tls",
-                    "tlsSettings": {"serverName": sni, "allowInsecure": True}
-                }
+                "settings": {"vnext": [{"address": ip, "port": 443, "users": [{"id": uuid, "encryption": "none"}]}]},
+                "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": {"serverName": sni, "allowInsecure": True}}
             }]
         }
-        return config
 
-    async def check(self, ip, sni, link=""):
-        if self.is_dead(ip, sni):
+    async def test_proxy(self, ip, sni, link, timeout):
+        if not await self.ensure_binary():
             return False
-
-        async with self.lock:
-            if not self.xray_bin.exists():
-                print("Скачиваем Xray...")
-                try:
-                    subprocess.run(["curl", "-sL", "-o", "xray.zip", "https://github.com/XTLS/Xray-core/releases/download/v1.8.7/Xray-linux-64.zip"], check=True)
-                    subprocess.run(["unzip", "-o", "xray.zip", "-d", "."], check=True)
-                    self.xray_bin.chmod(0o755)
-                except Exception as e:
-                    print(f"Ошибка скачивания Xray: {e}")
-                    return False
 
         local_port = self._get_free_port()
         config = self._build_config(link, ip, sni, local_port)
@@ -105,20 +96,17 @@ class Checker:
         process = None
         try:
             process = await asyncio.create_subprocess_exec(
-                str(self.xray_bin), "run", "-c", config_path,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                str(self.bin), "run", "-c", config_path,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
-            await asyncio.sleep(1) # Ждем поднятия Xray
+            await asyncio.sleep(1) # Время на запуск
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
             async with aiohttp.ClientSession(connector=connector) as session:
-                # Проверяем через YouTube, чтобы доказать обход ТСПУ
-                async with session.get("https://www.youtube.com", timeout=CHECK_TIMEOUT) as response:
-                    if response.status in (200, 301, 302):
-                        return True
+                async with session.get("https://www.youtube.com", timeout=timeout) as response:
+                    return response.status in (200, 301, 302)
         except Exception:
-            pass
+            return False
         finally:
             if process:
                 process.terminate()
@@ -126,5 +114,22 @@ class Checker:
             if os.path.exists(config_path):
                 os.remove(config_path)
 
-        self.mark_dead(ip, sni)
-        return False
+class Checker:
+    """Фасад, объединяющий кеш и раннер (Dependency Inversion)"""
+    def __init__(self):
+        self.cache = DeadCache(DEAD_CACHE_FILE, CACHE_TTL_HOURS)
+        self.runner = XrayRunner()
+
+    async def check(self, ip, sni, link):
+        if self.cache.is_dead(ip, sni):
+            return False
+            
+        is_alive = await self.runner.test_proxy(ip, sni, link, CHECK_TIMEOUT)
+        
+        if not is_alive:
+            self.cache.mark_dead(ip, sni)
+            
+        return is_alive
+
+    def save(self):
+        self.cache.save()
