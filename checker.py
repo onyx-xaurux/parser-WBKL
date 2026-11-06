@@ -92,6 +92,7 @@ class XrayRunner:
         }
 
     async def test_vless(self, ip, sni, link, timeout):
+        print(f"\n[TEST START] {ip} | {sni}")
         if not self.bin.exists():
             print(f"[FAIL] Бинарник Xray не найден по пути {self.bin}")
             return False
@@ -117,13 +118,14 @@ class XrayRunner:
 
             if process.returncode is not None:
                 stderr = (await process.stderr.read()).decode()
-                print(f"\n[FAIL] {ip} | Xray упал: {stderr.strip()[:150]}")
+                print(f"[FAIL] {ip} | Xray упал: {stderr.strip()[:150]}")
                 return False
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get("https://www.youtube.com", timeout=timeout) as response:
                     if response.status in (200, 301, 302):
+                        print(f"[SUCCESS] {ip}")
                         return True
                     else:
                         print(f"[FAIL] {ip} | HTTP код: {response.status}")
@@ -140,15 +142,6 @@ class XrayRunner:
                 os.remove(config_path)
 
     async def test_hysteria(self, ip, port, sni, link, timeout):
-        print(f"[INFO] Проверка Hysteria2 {ip}:{port}...")
-        try:
-            async with httpx.AsyncClient(proxy=f"hysteria2://{ip}:{port}", verify=False, timeout=timeout) as client:
-                response = await client.get("https://www.youtube.com")
-                if response.status_code in (200, 301, 302):
-                    return True
-        except Exception as e:
-            print(f"[FAIL] {ip} | Hysteria2: {e}")
-            return False
         return False
 
 class Checker:
@@ -157,7 +150,9 @@ class Checker:
         self.runner = XrayRunner()
 
     async def check(self, ip, sni, link, protocol):
+        print(f"[CHECK INIT] {ip} | {sni}")
         if self.cache.is_dead(ip, sni):
+            print(f"[SKIP] {ip} в кеше мертвых")
             return False
             
         if protocol in ("hy2", "hysteria2"):
