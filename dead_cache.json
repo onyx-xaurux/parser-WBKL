@@ -50,15 +50,15 @@
     "details": {
       "cloudflare": {
         "error": "TimeoutError",
-        "message": "без дополнительного описания"
+        "message": "\u0431\u0435\u0437 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0433\u043e \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u044f"
       },
       "apple": {
         "error": "TimeoutError",
-        "message": "без дополнительного описания"
+        "message": "\u0431\u0435\u0437 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0433\u043e \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u044f"
       },
       "telegram": {
         "error": "TimeoutError",
-        "message": "без дополнительного описания"
+        "message": "\u0431\u0435\u0437 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0433\u043e \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u044f"
       }
     },
     "first_failed": 1793878242
@@ -127,7 +127,7 @@
       },
       "apple": {
         "error": "TimeoutError",
-        "message": "без дополнительного описания"
+        "message": "\u0431\u0435\u0437 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0433\u043e \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u044f"
       },
       "telegram": {
         "error": "ProxyError",
@@ -135,5 +135,10 @@
       }
     },
     "first_failed": 1793878242
-  }
+  },
+  "51.250.42.70#yandex.ru": 1793980678.2649057,
+  "31.129.42.37#api.datapull.cc": 1793980678.2653525,
+  "37.9.4.128#api1.madapp.cc": 1793980678.2657688,
+  "45.10.246.35#rus.astvpn.com": 1793980678.266169,
+  "5.178.85.132#yandex.ru": 1793980678.2665758
 }
