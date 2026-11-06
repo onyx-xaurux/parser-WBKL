@@ -18,16 +18,17 @@ from config import (
 )
 
 log = logging.getLogger(__name__)
-URI_RE = re.compile(r"""(?:vless|vmess|trojan|ss)://[^\s<>"']+""", re.IGNORECASE)
+# Добавили поддержку hy2 и hysteria2
+URI_RE = re.compile(r"""(?:vless|vmess|trojan|ss|hy2|hysteria2)://[^\s<>"']+""", re.IGNORECASE)
 
 class ConfigExtractor:
-    """Отвечает только за парсинг текста (Single Responsibility)"""
     @staticmethod
     def parse_uri(raw):
         try:
             parsed = urlsplit(raw)
             protocol = parsed.scheme.lower()
-            if protocol not in ("vless", "vmess", "trojan", "ss"): return None
+            if protocol not in ("vless", "vmess", "trojan", "ss", "hy2", "hysteria2"): 
+                return None
 
             if protocol == "vmess":
                 payload = "".join((parsed.netloc + parsed.path).strip().split())
@@ -37,7 +38,7 @@ class ConfigExtractor:
                 port = int(data.get("port", 0))
                 sni = data.get("sni") or data.get("host") or server
                 if not server or not 1 <= port <= 65535: return None
-                return {"raw": raw, "server": server, "port": port, "sni": str(sni).lower()}
+                return {"raw": raw, "protocol": "vmess", "server": server, "port": port, "sni": str(sni).lower()}
 
             server = parsed.hostname
             port = parsed.port
@@ -46,8 +47,8 @@ class ConfigExtractor:
             query = parse_qs(parsed.query, keep_blank_values=True)
             get_param = lambda n: unquote(query.get(n, [""])[0])
             
-            sni = get_param("sni") or get_param("serverName") or get_param("host") or server
-            return {"raw": raw, "server": server, "port": port, "sni": sni.lower().rstrip(".")}
+            sni = get_param("sni") or get_param("serverName") or get_param("host") or get_param("peer") or server
+            return {"raw": raw, "protocol": protocol, "server": server, "port": port, "sni": sni.lower().rstrip(".")}
         except Exception:
             return None
 
@@ -60,7 +61,6 @@ class ConfigExtractor:
         return found
 
 class SourceFetcher:
-    """Отвечает за скачивание данных из веба и телеграма"""
     @staticmethod
     def read_lines(path):
         if not Path(path).exists(): return []
@@ -104,7 +104,6 @@ class SourceFetcher:
         return configs
 
 def load_whitelist():
-    """Читает YAML и возвращает сет разрешенных пар"""
     pairs = set()
     if not WHITELIST_FILE.exists(): return pairs
     try:
@@ -118,7 +117,6 @@ def load_whitelist():
     return pairs
 
 async def collect_all():
-    """Главный оркестратор парсинга (Facade)"""
     log.info("Сбор данных...")
     web_urls = SourceFetcher.read_lines(SOURCES_FILE)
     
@@ -129,10 +127,8 @@ async def collect_all():
     web_configs = [item for sublist in web_results for item in sublist]
     tg_configs = await SourceFetcher.fetch_telegram()
     
-    # DRY: Удаление дубликатов
     unique_configs = {cfg['raw']: cfg for cfg in (web_configs + tg_configs)}.values()
     
-    # Фильтрация
     allowed = load_whitelist()
     filtered = [cfg for cfg in unique_configs if (cfg['server'], cfg['sni']) in allowed]
     
