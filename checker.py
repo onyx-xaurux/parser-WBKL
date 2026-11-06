@@ -6,6 +6,7 @@ import socket
 import tempfile
 import subprocess
 import re
+import traceback
 from pathlib import Path
 from urllib.parse import parse_qs, unquote
 import aiohttp
@@ -116,7 +117,7 @@ class XrayRunner:
 
             if process.returncode is not None:
                 stderr = (await process.stderr.read()).decode()
-                print(f"[FAIL] {ip} | Xray упал: {stderr.strip()[:100]}")
+                print(f"\n[FAIL] {ip} | Xray упал: {stderr.strip()[:150]}")
                 return False
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
@@ -128,7 +129,8 @@ class XrayRunner:
                         print(f"[FAIL] {ip} | HTTP код: {response.status}")
                         return False
         except Exception as e:
-            print(f"[ERROR] {ip} | {type(e).__name__}: {e}")
+            print(f"\n[ERROR] {ip} | {type(e).__name__}: {e}")
+            traceback.print_exc()
             return False
         finally:
             if process:
@@ -145,7 +147,7 @@ class XrayRunner:
                 if response.status_code in (200, 301, 302):
                     return True
         except Exception as e:
-            print(f"[FAIL] {ip} | Hysteria2 не поддерживается: {e}")
+            print(f"[FAIL] {ip} | Hysteria2: {e}")
             return False
         return False
 
@@ -158,7 +160,6 @@ class Checker:
         if self.cache.is_dead(ip, sni):
             return False
             
-        # ВОТ ЗДЕСЬ БЫЛА ОШИБКА (вызывался несуществующий метод)
         if protocol in ("hy2", "hysteria2"):
             is_alive = await self.runner.test_hysteria(ip, 443, sni, link, CHECK_TIMEOUT)
         else:
