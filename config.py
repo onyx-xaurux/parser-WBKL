@@ -3,24 +3,24 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Файлы источников
+# Пути к файлам
 SOURCES_FILE = BASE_DIR / "sources.txt"
 TG_FILE = BASE_DIR / "tg.txt"
-
-# Белые списки (создаются скриптом fetch_whitelist.py)
-WHITELIST_IPS = BASE_DIR / "whitelist_ips.txt"
-WHITELIST_SNI = BASE_DIR / "whitelist_sni.txt"
-
-# Результаты
+WHITELIST_FILE = BASE_DIR / "ru.sni.yaml.txt"
 WORKING_FILE = BASE_DIR / "working_proxies.txt"
 DEAD_CACHE_FILE = BASE_DIR / "dead_cache.json"
 
-# Telegram
+# Настройки Telegram
 TG_API_ID = os.getenv("TG_API_ID", "").strip()
 TG_API_HASH = os.getenv("TG_API_HASH", "").strip()
 TG_SESSION_STRING = os.getenv("TG_SESSION_STRING", "").strip()
+TG_MESSAGES_LIMIT = 50
 
-# Настройки проверки
+# Настройки сети
 CHECK_TIMEOUT = 10
+MAX_DOWNLOAD_SIZE = 5 * 1024 * 1024
+REQUEST_TIMEOUT = 25
 MAX_CONCURRENT_CHECKS = 10
-CACHE_TTL_HOURS = 2  # Проверять мертвые раз в 2 часа
+
+# Кеширование (в часах)
+CACHE_TTL_HOURS = 2
