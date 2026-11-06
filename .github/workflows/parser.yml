@@ -1,5 +1,4 @@
-   name: Proxy Scanner
-
+ name: Proxy Scanner 2
 on:
   workflow_dispatch:
   schedule:
