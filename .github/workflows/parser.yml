@@ -25,6 +25,12 @@ jobs:
       - name: Install Python Deps
         run: pip install -r requirements.txt
 
+      - name: Download Xray (Latest)
+        run: |
+          curl -sL -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip -o xray.zip -d .
+          chmod +x xray
+
       - name: Fetch Whitelist
         run: python fetch_whitelist.py
 
