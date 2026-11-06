@@ -1,5 +1,32 @@
+   name: Proxy Scanner
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */2 * * *' # Каждые 2 часа
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install System Deps
         run: sudo apt-get update && sudo apt-get install -y unzip curl
+
+      - name: Install Python Deps
+        run: pip install -r requirements.txt
+
+      - name: Fetch Whitelist
+        run: python fetch_whitelist.py
 
       - name: Run Scanner
         env:
@@ -7,3 +34,17 @@
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           TG_SESSION_STRING: ${{ secrets.TG_SESSION_STRING }}
         run: python main.py
+
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for f in working_proxies.txt dead_cache.json; do
+            [ -f "$f" ] && git add "$f" || echo "no $f"
+          done
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "update results [skip ci]"
+            git push
+          fi
