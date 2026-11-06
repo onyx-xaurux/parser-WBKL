@@ -11,26 +11,28 @@ logger = logging.getLogger("scanner")
 async def main():
     logger.info("=== ЗАПУСК СКАНИРОВАНИЯ ===")
     
-    # 1. Сбор данных
     configs = await collect_all()
     logger.info(f"К проверке готово конфигов: {len(configs)}")
     
     if not configs:
         return
 
-    # 2. Проверка
+    # --- ОТЛАДКА: ПОКАЖЕМ ПЕРВЫЕ 3 ССЫЛКИ ---
+    for c in configs[:3]:
+        logger.info(f"DEBUG: {c['protocol']} | {c['raw'][:80]}...")
+    # ----------------------------------------
+
     checker = Checker()
     sem = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
     
     async def check_pair(cfg):
         async with sem:
-            # Берем данные напрямую из словаря, который отдает parser.py
             ip = cfg['server']
             sni = cfg['sni']
             raw = cfg['raw']
+            proto = cfg.get('protocol', 'vless')
             
-            # Вызываем проверку
-            if await checker.check(ip, sni, raw):
+            if await checker.check(ip, sni, raw, proto):
                 logger.info(f"[ALIVE] {raw[:60]}...")
                 return raw
             return None
@@ -39,7 +41,6 @@ async def main():
     tasks = [check_pair(cfg) for cfg in configs]
     results = await asyncio.gather(*tasks)
     
-    # 3. Сохранение
     alive = [r for r in results if r]
     WORKING_FILE.write_text("\n".join(alive), encoding="utf-8")
     checker.save()
