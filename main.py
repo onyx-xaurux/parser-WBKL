@@ -18,10 +18,7 @@ async def main():
     if not configs:
         return
 
-    # Выводим ключи для отладки
-    for c in configs[:3]:
-        logger.info(f"DEBUG: {c.get('protocol')} | {c.get('raw', '')[:60]}...")
-        logger.info(f"DEBUG KEYS: {list(c.keys())}")
+    for c in configs[:1]:
         logger.info(f"DEBUG IP/SNI: {c.get('server')} / {c.get('sni')}")
 
     checker = Checker()
@@ -35,24 +32,26 @@ async def main():
                 raw = cfg.get('raw')
                 proto = cfg.get('protocol', 'vless')
                 
-                if not ip or not sni:
-                    logger.error(f"[SKIP] Пустой IP или SNI: {cfg}")
-                    return None
-                
                 if await checker.check(ip, sni, raw, proto):
                     logger.info(f"[ALIVE] {raw[:60]}...")
                     return raw
                 return None
             except Exception as e:
-                logger.error(f"[CRITICAL] Ошибка при проверке {str(cfg.get('raw', ''))[:30]}: {e}")
+                logger.error(f"[CRITICAL] {e}")
                 traceback.print_exc()
-                return None
+                return e # Возвращаем ошибку, чтобы gather её увидел
 
     logger.info("Начинаем проверку...")
     tasks = [check_pair(cfg) for cfg in configs]
-    results = await asyncio.gather(*tasks)
     
-    alive = [r for r in results if r]
+    # ЛОВИМ ВСЕ ОШИБКИ
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    for res in results:
+        if isinstance(res, Exception):
+            logger.error(f"[GATHER ERROR] {type(res).__name__}: {res}")
+
+    alive = [r for r in results if r and not isinstance(r, Exception)]
     WORKING_FILE.write_text("\n".join(alive), encoding="utf-8")
     checker.save()
     
