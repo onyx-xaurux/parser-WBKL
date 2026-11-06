@@ -12,7 +12,6 @@ from aiohttp_socks import ProxyConnector
 from config import DEAD_CACHE_FILE, CHECK_TIMEOUT, CACHE_TTL_HOURS
 
 class DeadCache:
-    """Отвечает только за кеширование мертвых серверов (Single Responsibility)"""
     def __init__(self, path, ttl_hours):
         self.path = path
         self.ttl = ttl_hours * 3600
@@ -42,7 +41,6 @@ class DeadCache:
         self.data[f"{ip}#{sni}"] = time.time()
 
 class XrayRunner:
-    """Отвечает только за запуск и остановку Xray (Single Responsibility)"""
     def __init__(self, bin_path=Path("./xray")):
         self.bin = bin_path
         self._lock = asyncio.Lock()
@@ -52,7 +50,6 @@ class XrayRunner:
             if self.bin.exists():
                 return True
             try:
-                # В идеале тут должен быть requests, но для KISS оставляем subprocess
                 subprocess.run(["curl", "-sL", "-o", "xray.zip", "https://github.com/XTLS/Xray-core/releases/download/v1.8.7/Xray-linux-64.zip"], check=True)
                 subprocess.run(["unzip", "-o", "xray.zip", "-d", "."], check=True)
                 self.bin.chmod(0o755)
@@ -99,13 +96,19 @@ class XrayRunner:
                 str(self.bin), "run", "-c", config_path,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
-            await asyncio.sleep(1) # Время на запуск
+            await asyncio.sleep(1.5) # Ждем запуска Xray
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get("https://www.youtube.com", timeout=timeout) as response:
-                    return response.status in (200, 301, 302)
-        except Exception:
+                    if response.status in (200, 301, 302):
+                        return True
+                    else:
+                        print(f"[FAIL] {ip} | Код ответа: {response.status}")
+                        return False
+        except Exception as e:
+            # ВЫВОДИМ ОШИБКУ В ЛОГ, ЧТОБЫ ПОНЯТЬ ПРИЧИНУ
+            print(f"[ERROR] {ip} | Ошибка: {type(e).__name__} - {e}")
             return False
         finally:
             if process:
@@ -115,7 +118,6 @@ class XrayRunner:
                 os.remove(config_path)
 
 class Checker:
-    """Фасад, объединяющий кеш и раннер (Dependency Inversion)"""
     def __init__(self):
         self.cache = DeadCache(DEAD_CACHE_FILE, CACHE_TTL_HOURS)
         self.runner = XrayRunner()
