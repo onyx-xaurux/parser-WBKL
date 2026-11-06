@@ -10,7 +10,6 @@ import traceback
 from pathlib import Path
 from urllib.parse import parse_qs, unquote
 import aiohttp
-import httpx
 from aiohttp_socks import ProxyConnector
 from config import DEAD_CACHE_FILE, CHECK_TIMEOUT, CACHE_TTL_HOURS
 
@@ -45,7 +44,7 @@ class DeadCache:
 
 class XrayRunner:
     def __init__(self):
-        # ИСПОЛЬЗУЕМ АБСОЛЮТНЫЙ ПУТЬ
+        # Берем абсолютный путь
         self.bin = Path("xray").resolve()
 
     def _get_free_port(self):
@@ -93,16 +92,16 @@ class XrayRunner:
         }
 
     async def test_vless(self, ip, sni, link, timeout):
-        print(f"\n[TEST START] {ip} | {sni}")
+        print(f"[TEST] {ip} | {sni}")
         if not self.bin.exists():
-            print(f"[FAIL] Бинарник Xray не найден по пути {self.bin}")
+            print(f"[FAIL] Бинарник Xray не найден: {self.bin}")
             return False
 
         local_port = self._get_free_port()
         config = self._build_config(link, ip, sni, local_port)
         
         if not config:
-            print(f"[FAIL] {ip} | Не удалось разобрать ссылку (не vless)")
+            print(f"[FAIL] {ip} | Ошибка парсинга ссылки")
             return False
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
@@ -113,13 +112,14 @@ class XrayRunner:
         try:
             process = await asyncio.create_subprocess_exec(
                 str(self.bin), "run", "-c", config_path,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
             )
             await asyncio.sleep(1.5)
 
+            # Если Xray упал с ошибкой
             if process.returncode is not None:
                 stderr = (await process.stderr.read()).decode()
-                print(f"[FAIL] {ip} | Xray упал: {stderr.strip()[:150]}")
+                print(f"[FAIL] {ip} | Xray упал: {stderr.strip()[:100]}")
                 return False
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
@@ -129,16 +129,22 @@ class XrayRunner:
                         print(f"[SUCCESS] {ip}")
                         return True
                     else:
-                        print(f"[FAIL] {ip} | HTTP код: {response.status}")
+                        print(f"[FAIL] {ip} | HTTP {response.status}")
                         return False
+
+        except asyncio.TimeoutError:
+            print(f"[TIMEOUT] {ip} | Не ответил за {timeout} сек")
+            return False
         except Exception as e:
-            print(f"\n[ERROR] {ip} | {type(e).__name__}: {e}")
-            traceback.print_exc()
+            print(f"[ERROR] {ip} | {type(e).__name__}: {e}")
             return False
         finally:
-            if process:
-                process.terminate()
-                await process.wait()
+            if process and process.returncode is None:
+                try:
+                    process.terminate()
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
             if os.path.exists(config_path):
                 os.remove(config_path)
 
@@ -151,9 +157,7 @@ class Checker:
         self.runner = XrayRunner()
 
     async def check(self, ip, sni, link, protocol):
-        print(f"[CHECK INIT] {ip} | {sni}")
         if self.cache.is_dead(ip, sni):
-            print(f"[SKIP] {ip} в кеше мертвых")
             return False
             
         if protocol in ("hy2", "hysteria2"):
