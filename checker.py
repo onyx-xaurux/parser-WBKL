@@ -9,14 +9,15 @@ import re
 from pathlib import Path
 import aiohttp
 from aiohttp_socks import ProxyConnector
-from config import DEAD_CACHE, CHECK_TIMEOUT, CACHE_TTL_HOURS
+from config import DEAD_CACHE_FILE, CHECK_TIMEOUT, CACHE_TTL_HOURS
 
 class Checker:
     def __init__(self):
-        self.cache_file = DEAD_CACHE
+        self.cache_file = DEAD_CACHE_FILE
         self.cache = self._load_cache()
         self.ttl = CACHE_TTL_HOURS * 3600
         self.xray_bin = Path("./xray")
+        self.lock = asyncio.Lock() # Защита от одновременной загрузки Xray
 
     def _load_cache(self):
         if self.cache_file.exists():
@@ -48,8 +49,8 @@ class Checker:
 
     def _build_config(self, link, ip, sni, local_port):
         uuid = "00000000-0000-0000-0000-000000000000"
-        if link.startswith("vless://"):
-            match = re.match(r'vless://([^@]+)@', link)
+        if "vless://" in link:
+            match = re.search(r'vless://([^@]+)@', link)
             if match:
                 uuid = match.group(1)
 
@@ -83,15 +84,16 @@ class Checker:
         if self.is_dead(ip, sni):
             return False
 
-        if not self.xray_bin.exists():
-            print("Скачиваем Xray...")
-            try:
-                subprocess.run(["curl", "-L", "-o", "xray.zip", "https://github.com/XTLS/Xray-core/releases/download/v1.8.7/Xray-linux-64.zip"], check=True)
-                subprocess.run(["unzip", "-o", "xray.zip", "-d", "."], check=True)
-                self.xray_bin.chmod(0o755)
-            except Exception as e:
-                print(f"Ошибка скачивания Xray: {e}")
-                return False
+        async with self.lock:
+            if not self.xray_bin.exists():
+                print("Скачиваем Xray...")
+                try:
+                    subprocess.run(["curl", "-sL", "-o", "xray.zip", "https://github.com/XTLS/Xray-core/releases/download/v1.8.7/Xray-linux-64.zip"], check=True)
+                    subprocess.run(["unzip", "-o", "xray.zip", "-d", "."], check=True)
+                    self.xray_bin.chmod(0o755)
+                except Exception as e:
+                    print(f"Ошибка скачивания Xray: {e}")
+                    return False
 
         local_port = self._get_free_port()
         config = self._build_config(link, ip, sni, local_port)
@@ -107,16 +109,15 @@ class Checker:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1) # Ждем поднятия Xray
 
             connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
             async with aiohttp.ClientSession(connector=connector) as session:
-                # ЗАПРАШИВАЕМ ЗАБЛОКИРОВАННЫЙ САЙТ
-                # Если он откроется — значит сервер реально обходит ТСПУ
+                # Проверяем через YouTube, чтобы доказать обход ТСПУ
                 async with session.get("https://www.youtube.com", timeout=CHECK_TIMEOUT) as response:
                     if response.status in (200, 301, 302):
                         return True
-        except Exception as e:
+        except Exception:
             pass
         finally:
             if process:
