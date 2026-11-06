@@ -1,5 +1,6 @@
 aiohttp
 aiohttp-socks
+httpx
 pyyaml
 telethon
 beautifulsoup4
