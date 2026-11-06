@@ -14,6 +14,7 @@ async def main():
     # 1. Сбор данных
     configs = await collect_all()
     logger.info(f"К проверке готово конфигов: {len(configs)}")
+    
     if not configs:
         return
 
@@ -23,19 +24,12 @@ async def main():
     
     async def check_pair(cfg):
         async with sem:
-            # Безопасно достаем данные, поддерживаем и dict, и объекты класса
-            if isinstance(cfg, dict):
-                ip = cfg.get('server') or cfg.get('ip') or ""
-                sni = cfg.get('sni') or cfg.get('host') or ""
-                raw = cfg.get('raw') or cfg.get('link') or ""
-            else:
-                ip = getattr(cfg, 'server', getattr(cfg, 'ip', ""))
-                sni = getattr(cfg, 'sni', getattr(cfg, 'host', ""))
-                raw = getattr(cfg, 'raw', getattr(cfg, 'original_link', ""))
+            # Берем данные напрямую из словаря, который отдает parser.py
+            ip = cfg['server']
+            sni = cfg['sni']
+            raw = cfg['raw']
             
-            if not ip or not sni:
-                return None
-
+            # Вызываем проверку
             if await checker.check(ip, sni, raw):
                 logger.info(f"[ALIVE] {raw[:60]}...")
                 return raw
