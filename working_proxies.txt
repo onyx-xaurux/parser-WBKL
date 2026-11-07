@@ -1,1 +1,0 @@
-vless://a4067a06-1549-4a15-ad1f-f52f41651171@45.10.246.35:443?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&fp=chrome&sni=rus.astvpn.com&pbk=4E6T4guicbxmf2D5dWsRUF2TsoBBvJdMeDBloZQrInY#09%20%F0%9F%87%A8%F0%9F%87%A6%20OBConfigs
