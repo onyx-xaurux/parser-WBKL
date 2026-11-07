@@ -1,9 +1,9 @@
 import asyncio
 import logging
 import sys
-import traceback
 from parser import collect_all
 from checker import Checker
+from proxy_fetcher import get_working_proxy
 from config import WORKING_FILE, MAX_CONCURRENT_CHECKS
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s', stream=sys.stdout)
@@ -11,13 +11,19 @@ logger = logging.getLogger("scanner")
 
 async def main():
     logger.info("=== ЗАПУСК СКАНИРОВАНИЯ ===")
+    
+    # 1. Ищем валидный базовый прокси (РФ)
+    base_proxy = await get_working_proxy()
+    
+    # 2. Собираем конфиги
     configs = await collect_all()
     logger.info(f"К проверке готово конфигов: {len(configs)}")
     
     if not configs:
         return
 
-    checker = Checker()
+    # 3. Проверяем
+    checker = Checker(base_proxy=base_proxy)
     sem = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
     
     async def check_pair(cfg):
